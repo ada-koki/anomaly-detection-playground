@@ -439,6 +439,10 @@ def render_report_md(
                 (image_size, cpu_threads)
                 for cat, image_size, cpu_threads in condition_set
                 if cat == category
+                and any(
+                    (model, category, image_size, cpu_threads) in summary_map
+                    for model in models
+                )
             }
         )
         if not conditions:
@@ -460,6 +464,9 @@ def render_report_md(
                 summary_row = summary_map.get(
                     (model, category, image_size, cpu_threads)
                 )
+                if summary_row is None:
+                    # 実行記録が無い組合せは表に出さない（0/0 行は情報を持たない）。
+                    continue
                 n_runs = summary_row.get("n_runs") if summary_row else 0
                 n_ok = summary_row.get("n_ok") if summary_row else 0
                 cells = [
