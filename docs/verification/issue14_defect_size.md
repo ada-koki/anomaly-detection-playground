@@ -151,7 +151,7 @@ python scripts/defect_size_report.py \
 
 - `benchmarks/issue14/defect_size_summary.csv`
 - `benchmarks/issue14/defect_size_summary.md`
-- `benchmarks/issue14/detection_by_size.png`（サイズ帯別検出率の図）
+- `docs/images/issue14_detection_by_size.png`（サイズ帯別検出率の図。`scripts/defect_size_report.py` は `--out-dir` に `detection_by_size.png` を出力するが、リポジトリの安全チェックで画像は `docs/images/` 配下のみ許可しているため移動してコミット）
 
 ## 9. 関連ドキュメント
 
