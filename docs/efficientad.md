@@ -75,6 +75,14 @@ python scripts/run_anomalib.py \
   --prefetch-weights
 ```
 
+重みの保存先は Anomalib の仕様により `platformdirs.user_cache_path("anomalib")/pre_trained`
+（Linux では通常 `~/.cache/anomalib/pre_trained`）です。作業ディレクトリ配下に
+まとめたい場合は、実行前に `XDG_CACHE_HOME` を設定してください。
+
+```bash
+export XDG_CACHE_HOME="$PWD/cache"   # -> cache/anomalib/pre_trained/
+```
+
 ## CPU 学習の実行例
 
 以下は条件を短縮して CPU 学習・CPU 推論の可否を確認する例です。
