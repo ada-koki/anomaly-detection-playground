@@ -13,7 +13,7 @@
 | [MVTec-4K](https://huggingface.co/datasets/XimiaoZhang/MVTec-4K) | 高解像度、微小異常、縮小耐性 | ベースライン実行対象 |
 | [MVTec AD 2](https://www.mvtec.com/company/research/datasets/mvtec-ad-2) | 難条件での頑健性 | 今後追加 |
 | [VisA](https://amazon-visual-anomaly.s3.us-west-2.amazonaws.com/README.html) | 異なる画像分布での汎化性能 | 今後追加 |
-| 実撮影データ (5MP/12MP) | 実用条件での精度と性能 | 今後追加（非公開） |
+| 利用許可済みの実撮影データ | 実用条件での精度と性能 | 今後追加（データは非公開） |
 
 MVTec-4K は [HiAD](https://github.com/cnulab/HiAD) による高解像度派生データセットで、実際の4Kセンサー画像だけからなるデータセットではありません。**4Kの画像を256pxに縮小して得た結果は、4K入力での異常検知性能ではありません。** 処理前とモデル入力時の解像度、および縮小/タイル方式を必ず明記します。
 
@@ -63,9 +63,13 @@ python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model patc
 2. PyTorch CPU / ONNX Runtime CPU / OpenVINO CPU の同条件比較
 3. EfficientAD（教師重み・ImageNette・学習ステップ数を明示して導入）
 4. 4K向けタイル分割と、256/512/1024pxに縮小する方式の比較
-5. 欠陥サイズ別検出率、見逃し率、過検出率、5MP/12MPの実画像評価
+5. 欠陥サイズ別検出率、見逃し率、過検出率、利用許可済みの実撮影画像による評価
 
 詳細は [評価プロトコル](docs/benchmark_protocol.md) を参照してください。`python -m unittest discover -s tests -v` で依存関係なしの基本テストが実行できます。
+
+## 公開方針
+
+本リポジトリで公開するのは、公開可能な技術情報と個人で作成・公開する権利を持つコードです。勤務先・顧客・第三者の非公開ソースコード、画像、モデル、業務要件、計測ログは含めません。データやモデルの公開・利用前には、利用許諾と権利帰属を確認します。
 
 ## ライセンス
 
