@@ -37,7 +37,7 @@ antialias の有無で前処理結果が大きく変わり（Issue #12）、`eng
 - `model.model` を eval で呼び、InferenceBatch（NamedTuple）から `pred_score` と
   `anomaly_map` のテンソルだけを返す `nn.Module` ラッパ（`make_outputs_only`）を生成する。
 - 入力形状は固定 (1, 3, H, W)。動的軸は使わない。
-- まず `torch.onnx.export(..., dynamo=True, opset_version=17)` を試し、失敗したら
+- まず `torch.onnx.export(..., dynamo=True, opset_version=18)` を試し、失敗したら
   `dynamo=False`（legacy）を 1 回だけ試す。どちらで成功したか・失敗理由（例外型と
   メッセージ先頭）・出力名と形状・書き出し秒数・ファイルサイズを記録する。
 - `onnx.load` でグラフを読み、`graph.node` の `op_type` を集計したヒストグラムを残す。
@@ -63,8 +63,16 @@ antialias の有無で前処理結果が大きく変わり（Issue #12）、`eng
 
 - ワーカー内で行うこと: モデル/セッション読み込み → 前処理済み入力の読み込み（mmap）→
   ウォームアップ → 計測 → 出力保存。
-- ワーカー内で `adbench.memory.sampled_rss`（サンプリング推定）と
-  `adbench.memory.peak_rss_lifetime_mib`（`resource.getrusage` の生涯最大）を使う。
+- ワーカー内で `adbench.memory.sampled_rss`（推論ループ中のサンプリング推定）と
+  `adbench.memory.peak_rss_vmhwm_mib`（`/proc/self/status` の VmHWM。ワーカー自身のロード時を含むピーク）を使う。
+  `resource.getrusage(RUSAGE_SELF).ru_maxrss` は Linux では fork 時の親プロセスの値を引き継ぐため、
+  親（書き出し済みの compare_engines 本体）の RSS が下限として混入する。参考値として
+  `getrusage_maxrss_mib_inherits_parent` に残すが、比較には使わない。
+- opset: torch 2.15 の dynamo exporter は opset 18 未満に対応せず、17 を要求しても 18 で書き出した後の
+  ダウンコンバートに失敗する（`Pad` の 18→17 アダプタが無い）。そのため既定を 18 とし、
+  `opset_requested` と、ファイルの `opset_import` から読んだ実際の値 `opset` を分けて記録する。
+- dynamo は重みを外部データ `model.onnx.data` に保存する。`file_size_bytes` は `model.onnx` と
+  `model.onnx.data` の合計。
 
 ### 5) 共通入力の固定
 
@@ -198,7 +206,7 @@ python scripts/compare_engines.py \
   `intra_op_num_threads`、`INFERENCE_NUM_THREADS` は同じ数値でも内部の並列化
   戦略が異なる。数値の大小のみで「同じ設定」と解釈しないこと。
 - **ピーク RSS はサンプリング推定**。`sampled_rss` は 50ms 間隔のサンプリングで、
-  それより短いピークは取り逃す。`process_peak_rss_mib`（生涯最大）も工程全体の値で、
+  それより短いピークは取り逃す。`process_peak_rss_mib`（VmHWM）はワーカー全体（モデル読み込みを含む）のピークで、
   エンジン計測中だけの値ではない。
 - **PostProcessor（検証集合由来の正規化・閾値）は比較外**。`pred_score` / `anomaly_map`
   は生スコア・生マップで比較する。AUROC はその生の値で計算する。
