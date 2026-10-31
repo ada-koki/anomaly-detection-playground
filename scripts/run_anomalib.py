@@ -813,8 +813,8 @@ def _save_checkpoint(
 ) -> None:
     """学習後のチェックポイントと来歴サイドカーを保存し、report に記録する。
 
-    best チェックポイントがあれば ``DIR/model.ckpt`` へ複製し、無ければ
-    ``trainer.save_checkpoint`` で保存する。重みはコミットしない前提で、
+    現在のモデル状態を ``trainer.save_checkpoint`` で ``DIR/model.ckpt`` に保存し、
+    trainer が無い場合のみ best チェックポイントを複製する。重みはコミットしない前提で、
     ``DIR`` はリポジトリ外を推奨する（help に明記）。
     """
     target_dir = Path(args.save_checkpoint)
@@ -822,29 +822,21 @@ def _save_checkpoint(
     target = target_dir / "model.ckpt"
 
     trainer = getattr(engine, "trainer", None)
-    source = _best_checkpoint_path(trainer)
-    saved = False
-    if source is not None:
-        source_path = Path(source)
-        if source_path.is_file():
-            try:
-                same = source_path.resolve() == target.resolve()
-            except OSError:
-                same = False
-            if same:
-                saved = True
-            else:
-                shutil.copyfile(source_path, target)
-                saved = True
-    if not saved:
-        if trainer is None or not callable(
-            getattr(trainer, "save_checkpoint", None)
-        ):
+    # Lightning の best チェックポイントは validation 前（PostProcessor 統計や
+    # EfficientAD の quantile 確定前）の状態の可能性があるため、まず現在の
+    # 状態（fit・追加 validate 後）を trainer.save_checkpoint で保存する。
+    # trainer が使えない場合に限り best チェックポイントを複製する。
+    if trainer is not None and callable(getattr(trainer, "save_checkpoint", None)):
+        trainer.save_checkpoint(str(target))
+    else:
+        source = _best_checkpoint_path(trainer)
+        if source is None or not Path(source).is_file():
             raise RuntimeError(
                 "--save-checkpoint を使うには Lightning の trainer が必要です。"
                 "engine の初期化を確認してください。"
             )
-        trainer.save_checkpoint(str(target))
+        if Path(source).resolve() != target.resolve():
+            shutil.copyfile(source, target)
 
     checkpoint_sha256 = _sha256_file(target)
 
