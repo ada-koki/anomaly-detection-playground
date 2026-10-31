@@ -300,8 +300,7 @@ def _cell(
     notes: list[str] = []
 
     if n == 0:
-        notes.append(SMALL_SAMPLE_NOTE)
-        notes.append("n=0 のため率は算出できません")
+        notes.append("n=0 のため率は算出できません。")
     elif n < int(min_samples):
         notes.append(SMALL_SAMPLE_NOTE)
 
@@ -363,7 +362,7 @@ def _cell(
         "n_region_evaluable": len(evaluable_region),
         "n_without_mask": n_without_mask,
         "n_mask_vanished": n_mask_vanished,
-        "note": " ".join(notes),
+        "note": "".join(n if n.endswith("。") else n + "。" for n in notes),
     }
 
 
@@ -408,7 +407,7 @@ def _normal_summary(
         "false_positive_rate": false_positive_rate,
         "mean_normal_fp_pixel_ratio": mean_ratio,
         "n_with_pixel_fp_ratio": len(ratios),
-        "note": " ".join(notes),
+        "note": "".join(n if n.endswith("。") else n + "。" for n in notes),
     }
 
 

@@ -222,7 +222,7 @@ class SummarizeTest(unittest.TestCase):
     def test_empty_cell_note(self) -> None:
         cell = self.summary["by_defect_type_and_size_band"]["hole"]["small"]
         self.assertEqual(cell["n"], 0)
-        self.assertIn("参考値", cell["note"])
+        self.assertEqual(cell["note"], "n=0 のため率は算出できません。")
 
     def test_normal_summary(self) -> None:
         normal = self.summary["normal"]
