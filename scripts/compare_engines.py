@@ -55,7 +55,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="計測の繰り返し回数（既定 1）")
     parser.add_argument("--max-images", type=int, default=None,
                         help="計測する最大画像枚数（既定 None = 全 test）")
-    parser.add_argument("--opset", type=int, default=17, help="ONNX opset バージョン")
+    parser.add_argument("--opset", type=int, default=18, help="要求する ONNX opset（既定 18。torch 2.15 の dynamo exporter は 18 未満を自動で 18 に引き上げる）")
     parser.add_argument("--check-only", action="store_true",
                         help="export のみ実施し、ONNX 演算子ヒストグラムを記録して終了する")
     parser.add_argument("--worker", type=Path, default=None,
@@ -167,7 +167,11 @@ def _prepare_parent(
             x = apply_pre_processor(pre, img, "eval_transform")
             if isinstance(x, dict):
                 x = next(iter(x.values()))
-            arrays.append(x.detach().float().cpu().numpy().astype(np.float32))
+            x = x.detach().float().cpu()
+            if x.ndim == 4:
+                # (1, 3, H, W) → (3, H, W)。inputs.npy は N×3×H×W で保存する。
+                x = x[0]
+            arrays.append(x.numpy().astype(np.float32))
     stacked = np.stack(arrays, axis=0)
     del arrays
     np.save(str(inputs_path), stacked)
@@ -192,7 +196,7 @@ def _prepare_parent(
             export_result["op_histogram"] = onnx_op_histogram(onnx_path)
         except Exception as exc:
             export_result["op_histogram_error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
-        export_result["onnx_size_bytes"] = file_size_bytes([onnx_path])
+        export_result["onnx_size_bytes"] = file_size_bytes([onnx_path, onnx_path.with_name(onnx_path.name + ".data")])
         export_result["onnx_path"] = str(onnx_path)
 
     export_map: dict[str, Any] = {}
@@ -516,8 +520,10 @@ def run_main(args: argparse.Namespace) -> int:
             "前処理は全エンジン共通で eval_transform（antialias 有効、engine.test と同じ）を使い、"
             "1×3×H×W float32 の input に固定して各エンジンに渡しています。",
             "PostProcessor は比較対象に含めていません（生の pred_score / anomaly_map を比較）。",
-            "各エンジンは別プロセスで実行し、ピーク RSS は sampled_rss（サンプリング推定）と "
-            "resource.getrusage の生涯最大値を併記しています。",
+            "各エンジンは別プロセスで実行し、ピーク RSS は sampled_rss（推論ループ中のサンプリング推定）と "
+            "ワーカー自身の VmHWM（/proc/self/status、ロード時を含むピーク）を併記しています。"
+            "getrusage の ru_maxrss は Linux では fork 時の親プロセスの値を引き継ぐため、"
+            "getrusage_maxrss_mib_inherits_parent として参考値にとどめています。",
             "torch を基準に、pred_score と anomaly_map の差分・画像/画素 AUROC・"
             "画像レベル閾値での判定一致率を計算しています。",
             "エンジン比較の対象は model 推論時間（入力テンソル → 出力 numpy）で、"

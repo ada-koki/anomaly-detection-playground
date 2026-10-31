@@ -211,6 +211,36 @@ class TestCliHelp(unittest.TestCase):
         self.assertIn("--checkpoint", result.stdout)
 
 
+@unittest.skipUnless(_has("onnx"), "onnx が必要")
+class TestActualDefaultOpset(unittest.TestCase):
+    def test_reads_default_domain(self) -> None:
+        import onnx
+        from onnx import TensorProto, helper
+
+        node = helper.make_node("Identity", ["x"], ["y"])
+        graph = helper.make_graph(
+            [node],
+            "g",
+            [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+            [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+        )
+        model = helper.make_model(
+            graph,
+            opset_imports=[
+                helper.make_opsetid("com.microsoft", 1),
+                helper.make_opsetid("", 18),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "m.onnx"
+            onnx.save(model, str(path))
+            self.assertEqual(engines.actual_default_opset(path), 18)
+
+    def test_missing_file_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(engines.actual_default_opset(Path(tmp) / "none.onnx"))
+
+
 @unittest.skipUnless(
     _has("torch") and _has("onnxruntime") and _has("onnxscript"),
     "torch / onnxruntime / onnxscript が必要",
@@ -243,6 +273,16 @@ class TestExportRoundTrip(unittest.TestCase):
             self.assertEqual(result["status"], "ok", msg=str(result))
             self.assertTrue(path.is_file())
             self.assertGreater(path.stat().st_size, 0)
+            # 要求 opset とは別に、ファイルに書かれた実際の opset を記録する
+            self.assertEqual(result["opset_requested"], 17)
+            self.assertEqual(result["opset"], engines.actual_default_opset(path))
+            self.assertIsInstance(result["opset"], int)
+            data_path = Path(str(path) + ".data")
+            expected = path.stat().st_size + (
+                data_path.stat().st_size if data_path.exists() else 0
+            )
+            self.assertEqual(result["file_size_bytes"], expected)
+            self.assertEqual(result["external_data"], data_path.exists())
 
             import onnxruntime as ort
 

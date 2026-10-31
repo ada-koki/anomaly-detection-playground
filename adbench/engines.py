@@ -194,6 +194,20 @@ def onnx_op_histogram(onnx_path: str | Path) -> dict[str, int]:
     return {k: counts[k] for k in sorted(counts, key=lambda k: (-counts[k], k))}
 
 
+def actual_default_opset(path: str | Path) -> int | None:
+    """ONNX ファイルの既定ドメイン（``""`` / ``ai.onnx``）の opset を返す。読めなければ None。"""
+    try:
+        import onnx
+
+        model = onnx.load(str(path), load_external_data=False)
+    except Exception:
+        return None
+    for entry in model.opset_import:
+        if entry.domain in ("", "ai.onnx"):
+            return int(entry.version)
+    return None
+
+
 def file_size_bytes(paths: Iterable[str | Path]) -> int:
     """指定パスのうち存在するファイルの合計サイズを返す（バイト）。"""
     total = 0
@@ -264,7 +278,7 @@ def export_onnx(
     example: Any,
     path: str | Path,
     *,
-    opset: int = 17,
+    opset: int = 18,
 ) -> dict[str, Any]:
     """``torch_model``（= ``model.model``）を固定入力で ONNX に書き出す。
 
@@ -350,7 +364,14 @@ def export_onnx(
         result["status"] = "ok"
         result["method"] = method
         result["seconds"] = attempt["seconds"]
-        result["file_size_bytes"] = path.stat().st_size if path.exists() else None
+        # dynamo export は重みを ``<name>.onnx.data`` に外部保存するため合算する。
+        data_path = path.with_name(path.name + ".data")
+        result["external_data"] = data_path.exists()
+        result["file_size_bytes"] = file_size_bytes([path, data_path])
+        # 要求 opset が未対応だと exporter が自動で引き上げることがあるため、
+        # 実際に書き出されたモデルの既定ドメイン opset を記録する。
+        result["opset_requested"] = int(opset)
+        result["opset"] = actual_default_opset(path)
         return result
 
     result["error"] = "dynamo と legacy の両方で失敗しました"
@@ -567,6 +588,7 @@ def run_engine_worker(
     from .memory import (
         DEFAULT_SAMPLING_INTERVAL_S,
         peak_rss_lifetime_mib,
+        peak_rss_vmhwm_mib,
         sampled_rss,
     )
     from .stats import summarize_latencies
@@ -640,7 +662,11 @@ def run_engine_worker(
         "load_seconds": round(load_seconds, 3),
         "model_ms": summarize_latencies(model_times),
         "latency_peak_rss_mib_sampled": rss["peak_rss_mib"],
-        "process_peak_rss_mib": peak_rss_lifetime_mib(),
+        # VmHWM はワーカー自身のピーク。getrusage の ru_maxrss は Linux で
+        # fork 時の親（compare_engines 本体）の値を引き継ぐため参考値として別キーに残す。
+        "process_peak_rss_mib": peak_rss_vmhwm_mib(),
+        "process_peak_rss_source": "VmHWM(/proc/self/status)",
+        "getrusage_maxrss_mib_inherits_parent": peak_rss_lifetime_mib(),
         "sampling_interval_s": DEFAULT_SAMPLING_INTERVAL_S,
         "num_images": n,
         "warmup_executed": warmup_executed,
