@@ -1,4 +1,8 @@
-"""外部依存ライブラリなしで実行できる、CLIとJSON変換の基本テスト。"""
+"""外部依存ライブラリなしで実行できる、CLIとJSON変換の基本テスト。
+
+CLIの既定値はプロトコルJSONで決まるため、``build_parser().parse_args()`` 直後ではなく
+``parse_and_resolve()`` 後の引数で検証する。
+"""
 
 import importlib.util
 import tempfile
@@ -54,32 +58,64 @@ class BenchmarkCliTests(unittest.TestCase):
         self.assertTrue(args.skip_latency)
 
     def test_new_option_defaults(self):
-        args = module.build_parser().parse_args([])
-        self.assertIsNone(args.backbone)
-        self.assertAlmostEqual(args.coreset_sampling_ratio, 0.1)
+        """プロトコル mvtec_ad_v1 適用後の既定値を検証する。"""
+        args, protocol, protocol_path, overrides = module.parse_and_resolve([])
+
+        self.assertTrue(Path(protocol_path).is_file())
+        self.assertEqual(protocol.protocol_name, "mvtec_ad_v1")
+        self.assertEqual(overrides, {})
+
+        self.assertEqual(args.dataset, "mvtec_ad")
+        self.assertEqual(args.image_size, 256)
+        self.assertEqual(args.seed, 42)
+        self.assertEqual(args.num_workers, 0)
+        self.assertEqual(args.cpu_threads, 0)
+        self.assertEqual(args.val_split_mode, "from_test")
+        self.assertAlmostEqual(args.val_split_ratio, 0.2)
+
+        self.assertEqual(args.backbone, "resnet18")
+        self.assertEqual(list(args.layers), ["layer1", "layer2", "layer3"])
+        self.assertEqual(args.backbone_source, "protocol")
+        self.assertFalse(args.backbone_is_default)
+        # padim には coreset 系の設定がないため None のまま。
+        self.assertIsNone(args.coreset_sampling_ratio)
+        self.assertIsNone(args.num_neighbors)
+
         self.assertFalse(args.prefetch_weights)
+        self.assertFalse(args.manifest_only)
+
+        # patchcore はプロトコル既定値（coreset 0.1, num_neighbors 9）を使う。
+        patch_args, _, _, _ = module.parse_and_resolve(["--model", "patchcore"])
+        self.assertEqual(patch_args.backbone, "wide_resnet50_2")
+        self.assertEqual(list(patch_args.layers), ["layer2", "layer3"])
+        self.assertAlmostEqual(patch_args.coreset_sampling_ratio, 0.1)
+        self.assertEqual(patch_args.num_neighbors, 9)
 
     def test_mvtec_4k_layout(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "MVTec-4K"
             for split in ("train", "test"):
                 (root / "bottle" / split / "good").mkdir(parents=True)
-            args = module.build_parser().parse_args(
+            args, _, _, overrides = module.parse_and_resolve(
                 ["--dataset", "mvtec_4k", "--dataset-root", str(root)]
             )
+            self.assertEqual(args.dataset, "mvtec_4k")
+            self.assertEqual(overrides["dataset"], "mvtec_4k")
             self.assertEqual(module.validate_args(args, module.build_parser()), root)
 
     def test_prefetch_weights_skips_dataset_check(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "missing"
-            args = module.build_parser().parse_args(
+            args, _, _, _ = module.parse_and_resolve(
                 ["--dataset-root", str(root), "--prefetch-weights"]
             )
             self.assertEqual(module.validate_args(args, module.build_parser()), root)
 
     def test_invalid_split(self):
-        args = module.build_parser().parse_args(["--val-fraction", "1"])
         with self.assertRaises(SystemExit):
+            args, _, _, _ = module.parse_and_resolve(
+                ["--val-fraction", "1", "--prefetch-weights"]
+            )
             module.validate_args(args, module.build_parser())
 
     def test_invalid_latency_options(self):
@@ -90,10 +126,10 @@ class BenchmarkCliTests(unittest.TestCase):
         )
         for options in invalid_options:
             with self.subTest(options=options):
-                args = module.build_parser().parse_args(
-                    ["--prefetch-weights", *options]
-                )
                 with self.assertRaises(SystemExit):
+                    args, _, _, _ = module.parse_and_resolve(
+                        ["--prefetch-weights", *options]
+                    )
                     module.validate_args(args, module.build_parser())
 
     def test_json_safe_scalars(self):
@@ -129,7 +165,7 @@ class BenchmarkCliTests(unittest.TestCase):
     def test_build_base_report_schema_and_notes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "datasets" / "MVTecAD"
-            args = module.build_parser().parse_args(
+            args, protocol, protocol_path, overrides = module.parse_and_resolve(
                 [
                     "--dataset-root",
                     str(root),
@@ -138,8 +174,14 @@ class BenchmarkCliTests(unittest.TestCase):
                     "2",
                 ]
             )
-            report = report_module.build_base_report(args, root, "example", [])
-        self.assertEqual(report["schema_version"], 3)
+            protocol_report = module._build_protocol_report(
+                protocol, protocol_path, overrides
+            )
+            report = report_module.build_base_report(
+                args, root, "example", [], protocol_report
+            )
+        self.assertEqual(report_module.SCHEMA_VERSION, 4)
+        self.assertEqual(report["schema_version"], 4)
         self.assertIsNone(report["per_image_inference_latency"])
         self.assertIn("test_stage_seconds", report["timing_notes"])
         self.assertIn("engine.test", report["timing_notes"]["test_stage_seconds"])
@@ -161,3 +203,4 @@ class BenchmarkCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

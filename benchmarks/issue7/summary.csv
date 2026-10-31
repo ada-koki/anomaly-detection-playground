@@ -1,0 +1,5 @@
+category,model,protocol,train,val,test,overlap_allowed,manifest_sha256,engine_image_auroc,engine_pixel_auroc,raw_image_auroc,raw_pixel_auroc,engine_image_f1,train_s,lifetime_peak_rss_mib
+bottle,padim,mvtec_ad_v1,209,16,67,False,872f367684e416185b1086c99c8653686a2db0a9e10868ea4bdb751e0c5c62f9,0.9963,0.9768,0.9975,0.9749,0.9592,10.73,1714.23
+bottle,patchcore,mvtec_ad_v1,209,16,67,False,872f367684e416185b1086c99c8653686a2db0a9e10868ea4bdb751e0c5c62f9,1.0,0.9857,1.0,0.9839,0.9901,276.82,3209.53
+bottle,padim,mvtec_ad_full_test,209,83,83,True,14058eb7ddc6482be168b520498507f5d12f5f82e846a088c319a1bc90ba766e,0.9976,0.9777,0.9984,0.9757,0.9839,14.34,1870.61
+bottle,patchcore,mvtec_ad_full_test,209,83,83,True,14058eb7ddc6482be168b520498507f5d12f5f82e846a088c319a1bc90ba766e,1.0,0.9856,1.0,0.9838,0.992,257.9,3203.71

@@ -13,7 +13,7 @@ from typing import Any, Sequence
 
 from .memory import DEFAULT_SAMPLING_INTERVAL_S
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEPENDENCY_NAMES = ("torch", "torchvision", "anomalib", "lightning", "timm", "numpy")
 
 MEMORY_NOTES = (
@@ -36,6 +36,13 @@ TIMING_NOTES = {
         "time.perf_counter で計測した結果です。ウォームアップ画像は集計から除外します。"
     ),
 }
+
+RANDOMNESS_NOTES = (
+    "lightning.seed_everything(seed, workers=True) と torch.manual_seed(seed) を実行します。"
+    "torch.are_deterministic_algorithms_enabled() は実行時点のPyTorch設定を記録したもので、"
+    "本スクリプトが決定論的アルゴリズムを有効化したことを意味しません。"
+    "PYTHONHASHSEED はプロセス開始時点の環境変数の有無と値を記録します。"
+)
 
 
 def json_safe(value: Any) -> Any:
@@ -88,9 +95,11 @@ def build_base_report(
     root: Path,
     run_id: str,
     argv: Sequence[str],
+    protocol_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """実行開始時点の共通レポートを作る。"""
     environment = collect_environment()
+    pythonhashseed_value = os.environ.get("PYTHONHASHSEED")
     return {
         "schema_version": SCHEMA_VERSION,
         "status": "running",
@@ -100,11 +109,15 @@ def build_base_report(
         "category": args.category,
         "model": args.model,
         "backbone": args.backbone,
-        "backbone_is_default": args.backbone is None,
+        "backbone_is_default": getattr(args, "backbone_is_default", args.backbone is None),
+        "backbone_source": getattr(args, "backbone_source", None),
+        "layers": list(args.layers) if getattr(args, "layers", None) is not None else None,
         "coreset_sampling_ratio": (
             args.coreset_sampling_ratio if args.model == "patchcore" else None
         ),
+        "num_neighbors": getattr(args, "num_neighbors", None),
         "prefetch_weights": args.prefetch_weights,
+        "manifest_only": getattr(args, "manifest_only", False),
         "device": args.device,
         "image_size": [args.image_size, args.image_size],
         "image_handling": "whole_image_resized_not_tiled",
@@ -113,7 +126,22 @@ def build_base_report(
         "num_workers": args.num_workers,
         "requested_cpu_threads": args.cpu_threads,
         "torch_num_threads": None,
-        "val_split": {"mode": "from_test", "fraction": args.val_fraction, "seed": args.seed},
+        "val_split": {
+            "mode": args.val_split_mode,
+            "fraction": args.val_split_ratio,
+            "seed": args.seed,
+        },
+        "protocol": protocol_report,
+        "data_split": None,
+        "randomness": {
+            "seed": args.seed,
+            "seed_everything_called": False,
+            "torch_manual_seed_called": False,
+            "torch_are_deterministic_algorithms_enabled": None,
+            "pythonhashseed_present": "PYTHONHASHSEED" in os.environ,
+            "pythonhashseed_value": pythonhashseed_value,
+            "notes": RANDOMNESS_NOTES,
+        },
         "latency_settings": {
             "warmup": getattr(args, "latency_warmup", None),
             "max_images": getattr(args, "latency_max_images", None),
