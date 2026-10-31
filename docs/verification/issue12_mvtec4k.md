@@ -92,7 +92,7 @@ python scripts/run_anomalib.py --dataset mvtec_4k --dataset-root ../datasets/MVT
 
 観察:
 
-- 1 枚あたりの時間は 4K PNG のデコード（`read_image`）が大半を占め、モデル本体は 1 割前後でした。MVTec AD（900px）の PaDiM では decode P50 18.1ms、e2e P50 51.9ms です。
+- 1 枚あたりの時間は 4K PNG のデコード（`read_image`）が大半を占め、モデル本体は e2e P50 の 7〜19% でした。MVTec AD（900px）の PaDiM では decode P50 18.1ms、e2e P50 51.9ms です。
 - antialias 有効の縮小は 4096px 入力で P50 13〜17ms かかりました（修正前の antialias 無効では約 1ms）。
 - 同じ条件の PatchCore の train 工程は、修正前の実行で 226.56 秒、修正後で 514.21 秒でした。学習経路は修正の影響を受けないため、原因は実行環境のばらつきと考えていますが、未確認です。PaDiM の修正後 e2e も修正前より遅く、decode 自体が 401.7→482.0ms に増えているため、同様にばらつきを含みます。
 
