@@ -9,10 +9,12 @@
 - MVTec-4K は MVTec AD の画像を高解像度化した派生データである。
 - 配布物には 7 カテゴリが含まれる: bottle, capsule, grid, hazelnut, screw,
   transistor, wood。
-- 画像は 4096x4096 を想定した高解像度画像として配布されている（実データでの
-  サイズ確認は検証スクリプトで行う）。
-- tiny は ground truth の欠陥領域を縮小し、ポアソン合成で自然画像へ貼り戻した
-  条件として説明されている。
+- 画像は 4096x4096 の高解像度画像として配布されている（bottle の全 311 枚で
+  実データ確認済み。他カテゴリは未確認。`docs/verification/issue12_mvtec4k.md` 参照）。
+- 論文によれば、画像は MVTec AD を StableSR で 4096x4096 へ超解像したもの
+  （実際の 4K センサーで撮影した画像ではない）。
+- tiny は元データの ground truth 欠陥領域を切り出して縮小し、ポアソン合成で
+  正常画像へ貼り込んだ合成欠陥として説明されている。
 - 出典は HF のデータカード（XimiaoZhang/MVTec-4K）と HiAD 論文
   （arXiv 2508.12931）である。論文表の枚数は本リポジトリでは「参考値」として
   扱い、実データとの差は warning として報告する。
@@ -92,7 +94,14 @@ foreground 配下の画像が train/test の重複行として解釈される。
 
 `scripts/validate_mvtec4k.py --make-view` は、エラーが 0 のカテゴリについて
 `train/`、`test/`、`ground_truth/` の必要ファイルだけをハードリンク（既定、`--link-mode`）で並べた
-ビューを作る。foreground は含めない。
+ビューを作る。foreground は含めない。同一ファイルシステム上のハードリンクなので
+追加容量はほぼゼロ（bottle で約 60KB、ディレクトリ分のみ）。
+
+symlink ではなくハードリンクにしているのは、Anomalib 2.7 の
+`make_mvtec_ad_dataset` が `is_within_directory()` でパスを解決し、root 外を指す
+symlink を除外するためである。symlink のビューでは `Found 0 images` になる
+（実データで確認）。別ファイルシステムでハードリンクが作れない場合は
+`--link-mode copy` を使う。
 
 ```bash
 python scripts/validate_mvtec4k.py \
@@ -129,7 +138,8 @@ python scripts/validate_mvtec4k.py --root datasets/MVTec-4K
 - `--skip-pixels`: Pillow を使うピクセル検査を省略する。
 - `--max-samples`: test の各 label_name と train から先頭 N 件ずつだけ
   ピクセル検査する。メモリと時間を抑えたいときに使う。
-- `--make-view`: エラー 0 のカテゴリだけ clean view を作る。
+- `--make-view DIR`: エラー 0 のカテゴリだけ clean view を作る。
+- `--link-mode {hardlink,copy,symlink}`: clean view の作り方（既定 hardlink。symlink は Anomalib では使えない）。
 
 終了コード:
 
@@ -175,6 +185,10 @@ python scripts/validate_mvtec4k.py --root datasets/MVTec-4K
 - `non_binary_mask`: マスクに 0/255 以外の画素がある。
 - `empty_mask`: label=1 なのにマスクの前景画素が 0。
 
+判定はしないが記録する統計: マスク面積比 `mask_area_fraction`、bbox、
+マスク画素のうち foreground>0 の内側にある割合 `mask_in_foreground_fraction`
+（欠陥が物体上にあるかの座標整合の目安）。
+
 論文表との差:
 
 - `paper_count_mismatch`: 件数が論文表の参考値と異なる。error ではなく warning。
@@ -214,16 +228,18 @@ MVTec-4K のネイティブ画像は 4096x4096 を想定している。一方、
 以下は本リポジトリの開発時点で確認・整理した内容であり、法的助言ではない。
 最終的な利用可否は配布元の一次情報と利用者自身の判断で確認すること。
 
-- HF のデータカードおよび HiAD 論文は Apache-2.0 と表記している。
-- ただし MVTec-4K の元画像は MVTec AD 由来である。MVTec AD には
-  CC BY-NC-SA 4.0 の非商用・継承条件がかかると考えるのが安全である。
-  この点は一次情報の確認を完了していない項目を含む（未検証）。
-- 高解像度化に使われた StableSR は S-Lab License 1.0 である。非商用での
-  再配布・利用を許可し、商用利用は要連絡とされている。
+- HF のデータカード（`license: apache-2.0`）と HiAD の GitHub リポジトリは
+  Apache-2.0 と表記している。
+- しかし MVTec-4K の画像は MVTec AD（CC BY-NC-SA 4.0：表示・非商用・継承）を
+  元にした派生物である。NC・SA 条件の付いた素材の派生物を、派生元より緩い
+  Apache-2.0 で再許諾できるとは考えにくい。本リポジトリは、MVTec AD の条件
+  （非商用・継承）が及ぶものとして扱う（解釈であり、権利者の見解は未確認）。
+- 超解像に使われた StableSR のコードは S-Lab License 1.0（非商用目的の再配布・
+  利用を許可、商用は権利者に要連絡）。生成画像への適用範囲は明記されていない
+  （未確認）。
 - したがって本リポジトリでは、MVTec-4K およびその派生画像・重みの商用利用は
   不可として扱う。本リポジトリはデータ・派生画像・重みを再配布せず、
   コミットしない。
 - データを取得・利用する際は、配布元のデータカード、MVTec AD のライセンス、
   StableSR のライセンスをそれぞれ確認すること。
-- 本ドキュメントには実測値（実データの枚数、画像サイズ、マスク面積など）を
-  書かない。実測結果は別途、検証記録として保存する。
+- 実測結果は `docs/verification/issue12_mvtec4k.md` に記録する。

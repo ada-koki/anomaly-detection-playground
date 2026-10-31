@@ -3,7 +3,7 @@
 `anomaly-detection-playground` は、産業用の**画像異常検知（Visual Anomaly Detection）**を、精度・学習時間・推論速度・メモリ効率の観点で比較する実験リポジトリです。特に**CPUだけで学習・推論できるか**と、**高解像度画像上の微小欠陥**を重視します。
 
 > [!IMPORTANT]
-> **初期ベースラインです。** Anomalib 2.7.0 の PaDiM / PatchCore を呼び出し、CPUの学習・テスト工程の時間・ピークRSSと精度指標をJSONに保存します。Linux（8 vCPU、GPUなし）上で MVTec AD の bottle / grid カテゴリを用いた CPU のみの学習・テスト完走を確認済みです（[検証記録](docs/verification/issue5_cpu_baseline.md)）。Windows は未検証です。EfficientAD は短縮条件（1 エポック）での CPU 学習・CPU 推論とチェックポイント推論を確認済みです（[検証記録](docs/verification/issue10_efficientad.md)、[使い方](docs/efficientad.md)）。学習/推論デバイスは観測値を report に記録し、`--save-checkpoint` / `--checkpoint` による二段実行（GPU 学習 + CPU 推論を想定）に対応しています。CPU での二段実行のみ確認済みで、GPU 経路は未検証です（[検証記録](docs/verification/issue11_device_modes.md)、[説明](docs/device_modes.md)）。タイル分割、ONNX Runtime / OpenVINO比較は今後追加します。
+> **初期ベースラインです。** Anomalib 2.7.0 の PaDiM / PatchCore を呼び出し、CPUの学習・テスト工程の時間・ピークRSSと精度指標をJSONに保存します。Linux（8 vCPU、GPUなし）上で MVTec AD の bottle / grid カテゴリを用いた CPU のみの学習・テスト完走を確認済みです（[検証記録](docs/verification/issue5_cpu_baseline.md)）。Windows は未検証です。EfficientAD は短縮条件（1 エポック）での CPU 学習・CPU 推論とチェックポイント推論を確認済みです（[検証記録](docs/verification/issue10_efficientad.md)、[使い方](docs/efficientad.md)）。学習/推論デバイスは観測値を report に記録し、`--save-checkpoint` / `--checkpoint` による二段実行（GPU 学習 + CPU 推論を想定）に対応しています。CPU での二段実行のみ確認済みで、GPU 経路は未検証です（[検証記録](docs/verification/issue11_device_modes.md)、[説明](docs/device_modes.md)）。MVTec-4K は bottle でデータ整合の検証と256px縮小入力での CPU 実行を確認済みです（[検証記録](docs/verification/issue12_mvtec4k.md)）。タイル分割、ONNX Runtime / OpenVINO比較は今後追加します。
 
 ## 評価データセット
 
@@ -43,13 +43,13 @@ python scripts/run_anomalib.py --dataset mvtec_ad --category bottle --model padi
 python scripts/run_anomalib.py --dataset mvtec_ad --category bottle --model patchcore --device cpu --image-size 256
 ```
 
-MVTec-4Kは[配布ページ](https://huggingface.co/datasets/XimiaoZhang/MVTec-4K/tree/main)から入手し、`datasets/MVTec-4K/<category>/train/good/`、`test/good/` 等を含む構成で配置してください。全体で約45.7GBあります。
+MVTec-4Kは[配布ページ](https://huggingface.co/datasets/XimiaoZhang/MVTec-4K/tree/main)から入手し、`datasets/MVTec-4K/<category>/` に配置してください。全体で約45.7GB（bottle だけで約4.2GB）あります。**生配置には `foreground/` があり、Anomalib の MVTecAD にそのまま渡すと重複行が生じて失敗するため**、検証スクリプトで clean view（ハードリンク）を作ってから使います（[詳細](docs/mvtec4k.md)、[検証記録](docs/verification/issue12_mvtec4k.md)）。
 
 ```bash
-# 4K画像を256pxに縮小した比較（「高解像度推論」ではない）
-python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model padim --device cpu --image-size 256
-# 入力解像度を増やした試験（CPUメモリ不足に注意）
-python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model patchcore --device cpu --image-size 512
+# 画像・マスク・ラベルの整合を検証し、Anomalib 用の clean view を作る
+python scripts/validate_mvtec4k.py --root datasets/MVTec-4K --category bottle --make-view datasets/MVTec-4K-view
+# 4K画像を256pxに縮小した比較（「高解像度推論」ではない。report の resolution_condition は downscaled）
+python scripts/run_anomalib.py --dataset mvtec_4k --dataset-root datasets/MVTec-4K-view --category bottle --model padim --device cpu --image-size 256
 ```
 
 `--device cpu` を明示すると学習・評価の両方でCPUを使います。参考として `--device cuda` でも実行できます。`--cpu-threads 8`、`--num-workers 0`、`--train-batch-size 1`、`--eval-batch-size 1` 等で条件を固定できます。
@@ -103,6 +103,6 @@ GitHub Actions（`.github/workflows/ci.yml`）は push と pull_request で、Py
 
 ## ライセンス
 
-このリポジトリのコードは [MIT](LICENSE) です。画像データおよび事前学習済み重みのライセンスは別です。MVTec AD は非商用の CC BY-NC-SA 4.0。MVTec-4K 配布ページには Apache-2.0 表記がありますが、派生元の権利・利用条件も確認してください。データと重みはGit管理しません。
+このリポジトリのコードは [MIT](LICENSE) です。画像データおよび事前学習済み重みのライセンスは別です。MVTec AD は非商用の CC BY-NC-SA 4.0。MVTec-4K 配布ページには Apache-2.0 表記がありますが、MVTec AD の派生物なので本リポジトリでは非商用・継承条件が及ぶものとして扱います（[詳細](docs/mvtec4k.md#ライセンスと制限事項)）。データと重みはGit管理しません。
 
 参考：[Anomalib](https://github.com/open-edge-platform/anomalib) / [Anomalib公式ドキュメント](https://anomalib.readthedocs.io/en/latest/) / [HiAD](https://github.com/cnulab/HiAD)

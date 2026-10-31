@@ -152,7 +152,7 @@ Anomalibの `ValSplitMode.FROM_TEST` は `label_aware=True` で分割します�
 
 - `test_stage_seconds` は `engine.test` 全体（テストデータ読み込み・評価指標計算を含む）の時間です。**画像1枚あたりの推論時間ではありません。** 画像1枚の値は `per_image_inference_latency` を参照してください。
 - 画像1枚あたりの計測は、1プロセス・バッチサイズ1・指定スレッド数での値です。前処理や後処理の実装、入力解像度、モデルによって結果は変わります。
-- MVTec-4KはMVTec ADに似たディレクトリ構成なので同じ `MVTecAD` データモジュールを試す段階です。ラベルと全カテゴリの整合性は未検証です。
+- MVTec-4K は生配置に `foreground/` があり、Anomalib の `MVTecAD` にそのまま渡せません。`scripts/validate_mvtec4k.py --make-view` で作る clean view を使います（`docs/mvtec4k.md`）。整合検証は bottle のみ実施済みで、他の 6 カテゴリは未検証です。
 - PaDiM/PatchCoreで入力4096pxを指定するとメモリ不足の可能性があります。**4Kのネイティブ入力対応は未保証です。**
 - CPU での `fit` / `test` は PaDiM（bottle, grid）と PatchCore（bottle）で実機完走を確認済みです（256px, `docs/verification/` 参照）。その他のカテゴリ・4K条件での CPU 実行は未検証です。
 - `raw_score_metrics` は PostProcessor を通さない検証用の値です。実機確認は PaDiM・MVTec AD bottle・256px の条件に限られ、他のカテゴリ・モデル・解像度では未検証です。
