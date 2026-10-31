@@ -16,7 +16,7 @@ from typing import Any
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROTOCOL_PATH = _REPO_ROOT / "configs" / "protocols" / "mvtec_ad_v1.json"
 
-_ALLOWED_DATASETS = {"mvtec_ad", "mvtec_4k"}
+_ALLOWED_DATASETS = {"mvtec_ad", "mvtec_4k", "mvtec_ad2", "visa"}
 # val_split_mode=none は PostProcessor の正規化パラメータが NaN になり
 # engine.test のメトリクスが信頼できないため、許可しない（Issue #7）。
 _ALLOWED_VAL_SPLIT_MODES = {"same_as_test", "from_test"}
