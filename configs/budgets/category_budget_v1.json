@@ -1,0 +1,8 @@
+{
+  "name": "category_budget_v1",
+  "max_train_stage_seconds": 1800,
+  "max_peak_rss_mib": 6000,
+  "max_download_mib": 2048,
+  "is_provisional": true,
+  "notes": "8 vCPU / 16GB RAM（スワップなし）の計測ホスト向けの暫定予算（Issue #32）。基準: VisA candle PatchCore global は OOM Kill、MVTec AD 2 vial PatchCore global の学習段階 1895.38 s（干渉なし再計測 1646.26 s）、ピーク 4194.06 MiB。download はデータセット取得に必要なアーカイブ量（VisA.tar は全カテゴリ共通で 1840.44 MiB）。統計的に決めた値ではない。"
+}
