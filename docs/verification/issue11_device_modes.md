@@ -41,7 +41,7 @@ GPU 環境では 1 段目を `--device cuda` にすると `gpu_train_cpu_infer` 
 ## 異常系
 
 - GPU の無い環境で `--device cuda` を指定すると、`CUDAを利用できません。--device cpu を指定してください。` でエラー終了（終了コード 1、report は `status: failed` で保存）しました。黙って CPU で続行しないことを確認しました。
-- 観測デバイスが要求と異なる場合の終了コード 3（`--allow-device-mismatch` で警告のみ）は単体テストで確認しています。実機では再現していません。
+- 観測デバイスと要求の不一致を検出するロジック（`adbench.devices.detect_device_mismatch`）は単体テストで確認しています。不一致時に終了コード 3 で終える CLI 経路（`--allow-device-mismatch` で警告のみ）は、実機でも CLI テストでも再現していません。
 
 ## 未検証
 
