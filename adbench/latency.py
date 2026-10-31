@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 from typing import Any, Sequence
 
+from .preprocess import DEFAULT_PREPROCESS_MODE, apply_pre_processor, describe_preprocess
 from .memory import DEFAULT_SAMPLING_INTERVAL_S, sampled_rss
 from .stats import summarize_latencies
 
@@ -70,8 +71,11 @@ def measure_per_image_latency(
     warmup: int,
     max_images: int | None,
     repeats: int,
+    preprocess_mode: str = DEFAULT_PREPROCESS_MODE,
 ) -> dict[str, Any]:
     """画像1枚ごとの推論レイテンシを計測する。
+
+    preprocess_mode は ``adbench.preprocess.PREPROCESS_MODES`` のいずれか。
 
     torch と anomalib は関数内で遅延 import する。
     """
@@ -104,11 +108,10 @@ def measure_per_image_latency(
         decode_ms = (time.perf_counter() - decode_start) * 1000.0
 
         preprocess_start = time.perf_counter()
-        # PreProcessor はテンソルを受け取りテンソルを返す（Anomalib 2.7.0）。
+        # 既定は Lightning の test ループと同じ transform（antialias 有効）。
+        # PreProcessor.forward() は antialias 無効の export_transform を使うため直接呼ばない。
         input_tensor = image.unsqueeze(0)
-        preprocessed = (
-            pre_processor(input_tensor) if pre_processor is not None else input_tensor
-        )
+        preprocessed = apply_pre_processor(pre_processor, input_tensor, preprocess_mode)
         preprocess_ms = (time.perf_counter() - preprocess_start) * 1000.0
 
         current_hw = _tensor_hw(preprocessed)
@@ -148,7 +151,7 @@ def measure_per_image_latency(
         for key in LATENCY_STAGE_KEYS
     }
     notes = (
-        "decode は read_image のみ、preprocess はバッチ次元付与と pre_processor（画像テンソルを入力）、"
+        "decode は read_image のみ、preprocess はバッチ次元付与と pre_processor の変換（preprocess.mode を参照）、"
         "model は model.model に前処理済みテンソルを渡す時間です。"
         "postprocess は post_processor の時間です。"
         "end_to_end は decode から postprocess までの合計です。"
@@ -166,6 +169,7 @@ def measure_per_image_latency(
         "warmup_requested": warmup,
         "warmup_images": warmup_executed,
         "warmup_excluded_from_summary": True,
+        "preprocess": describe_preprocess(pre_processor, preprocess_mode),
         "max_images": max_images,
         "measured_images": len(measured_paths),
         "repeats": repeats,

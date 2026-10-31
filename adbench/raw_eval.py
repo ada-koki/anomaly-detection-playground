@@ -21,6 +21,8 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .preprocess import apply_pre_processor, describe_preprocess
+
 # 256px×100枚相当の画素数。メモリ見積りの目安として notes に記録する。
 REFERENCE_PIXEL_COUNT = 100 * 256 * 256
 
@@ -262,9 +264,9 @@ def evaluate_raw_score_metrics(
 
             image = read_image(image_path, as_tensor=True)
             input_tensor = image.unsqueeze(0)
-            preprocessed = (
-                pre_processor(input_tensor) if pre_processor is not None else input_tensor
-            )
+            # engine.test と同じ transform（antialias 有効）を使う。
+            # PreProcessor.forward() は antialias 無効の export_transform になるため使わない。
+            preprocessed = apply_pre_processor(pre_processor, input_tensor, "eval_transform")
             if isinstance(preprocessed, Mapping):
                 preprocessed = next(iter(preprocessed.values()))
             preprocessed = preprocessed.to(torch_device)
@@ -354,6 +356,7 @@ def evaluate_raw_score_metrics(
         "image_score_min": min(finite_scores) if finite_scores else None,
         "image_score_max": max(finite_scores) if finite_scores else None,
         "anomaly_map_size": list(map_size) if map_size is not None else None,
+        "preprocess": describe_preprocess(pre_processor, "eval_transform"),
         "device": str(torch_device),
         "normalization": "none(post_processor を通さない生スコア)",
         "notes": " ".join(notes_parts),
