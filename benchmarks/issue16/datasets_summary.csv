@@ -4,3 +4,5 @@ visa_candle_patchcore_256,accuracy,oom_killed,,,,,,,,,,,,,,,,,,,,yes,
 ad2_vial_padim_256,accuracy,ok,mvtec_ad2,vial,padim,256x256,112,0.631378,0.846444,0.629252,0.846682,32.98,8.8,30.2,40.2,55.6,64.1,2008.66,1137.75,872.18,8,yes,20261031T134248Z-27de2a6f
 ad2_vial_patchcore_256,accuracy,ok,mvtec_ad2,vial,patchcore,256x256,112,0.857993,0.94292,0.857993,0.942598,1895.38,35.48,243.9,517.1,281.0,583.7,4194.06,1852.69,1855.59,8,yes,20261031T134352Z-de865b08
 mvtecad_bottle_padim_256,accuracy,ok,mvtec_ad,bottle,padim,256x256,67,0.996324,0.97676,0.996324,0.976871,16.4,6.68,80.3,825.9,123.2,937.4,1562.87,948.86,797.42,8,yes,20261031T141724Z-a62b77c8
+visa_candle_patchcore_256,accuracy_retry1,oom_killed,,,,,,,,,,,,,,,,,,,,yes,
+visa_candle_patchcore_mitigation,accuracy_mitigation,oom_killed,,,,,,,,,,,,,,,,,,,,yes,

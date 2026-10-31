@@ -116,7 +116,7 @@ VisA には非公開 test は無く、`1cls.csv` の train/test 定義をその�
 | mvtecad_bottle_padim_256 | 16.40 | 6.68 | 80.3 | 825.9 | 123.2 | 937.4 | 1562.87 | 948.86 | 797.42 |
 
 - AD2 vial PatchCore の `train_stage_s` 1895.38 s には coreset 選択（29,797 点）の時間を含む。
-- VisA candle PatchCore の行は全フィールド空（OOM Kill）。
+- VisA candle PatchCore の行（accuracy / accuracy_retry1 / accuracy_mitigation）は全フィールド空（いずれも OOM Kill）。
 
 ### 表 3: run_id（追跡用）
 
@@ -141,6 +141,9 @@ VisA には非公開 test は無く、`1cls.csv` の train/test 定義をその�
 
 1. **干渉の扱い**: 本 CSV の全行が `other_process_interference=yes`。規約上、時間・レイテンシの採用値は `phase=latency_remeasure_tryN` かつ干渉なしの行に限るが、**本 CSV には該当行が無い**。したがって「干渉なしのレイテンシは未取得」である。AUROC のみ採用値として扱う。
 2. **VisA candle PatchCore の OOM Kill**: 学習中に exit 137 で強制終了（カーネルログで global OOM、anon-rss 約 9.1 GiB = 9,501,928 kB 時点）。Anomalib 2.7 の `PatchcoreModel` は全パッチ特徴を list に溜め、`torch.vstack` で結合してから coreset 選択する。**仮説（未検証）**: 900 枚 × 1024 パッチ × 1536 次元 × 4 バイト ≈ 5.7 GB の特徴が結合時に二重に存在し、16 GB ホストでは収まらない。VisA candle PatchCore の精度は未取得。
+   - **再実行（`phase=accuracy_retry1`、同条件 256px）**: 再び exit 137（カーネルログで global OOM、anon-rss 8,152,616 kB ≈ 7.8 GiB 時点）。開始時の MemAvailable は 8,632 MiB。
+   - **回避策 1 回（`phase=accuracy_mitigation`、入力 192px、coreset 比率は既定のまま）**: これも exit 137（anon-rss 6,782,560 kB ≈ 6.5 GiB 時点、開始時 MemAvailable 8,821 MiB）。coreset 比率を下げなかったのは、coreset 選択が特徴結合の後に行われ、ピークの主因（仮説）に効かないため。
+   - 3 回とも同一ホストの別プロセスと同時に動作しており（干渉あり）、利用可能メモリは約 8.6〜8.8 GiB だった。**このホスト条件では VisA candle PatchCore（900 枚）は実行できず、精度は未検証**。対策（特徴の逐次 coreset 化、学習枚数の制限、メモリの大きいホスト）は今後の課題。
 3. **縮小と縦横比**: 両データセットとも 256x256 への全体縮小で、縦横比は保持しない（タイル分割なし）。AD2 は 1400x1900 → 256x256 のため、細い欠陥は縮小で消失し得る。この影響は本記録では評価していない（未検証）。
 4. **1 カテゴリずつの実行**: 本記録の結果は VisA candle と AD2 vial の各 1 カテゴリのみ。他カテゴリの傾向は未検証。
 5. **AD2 の val 抽出**: 公式 validation ではなく `test_public` からの `from_test` 0.2 抽出を使っている。この違いが閾値と F1 に与える影響は本記録では評価していない（AUROC は閾値非依存のため影響しない）。
@@ -167,7 +170,7 @@ python scripts/run_anomalib.py --protocol configs/protocols/mvtec_ad2_v1.json --
 - MVTec AD 2 の照明条件（overexposed / regular / shift_1〜4 / underexposed）別の精度。内訳は未集計・未評価。
 - MVTec AD 2 の公式 validation（vial は正常 41 枚）を閾値調整に使う条件との比較。
 - `test_private` / `test_private_mixed` を用いる評価（正解非公開のため本リポジトリでは対象外）。
-- VisA candle PatchCore の精度、および OOM の原因仮説の検証とメモリ対策（coreset 比率・特徴の逐次蓄積など）。
+- VisA candle PatchCore の精度（256px 再実行・192px 回避策とも OOM Kill）、および OOM の原因仮説の検証とメモリ対策（特徴の逐次 coreset 化・学習枚数の制限など）。
 - EfficientAD の VisA / MVTec AD 2 での実行。
 - タイル分割・高解像度入力（256px 全体縮小以外）での両データセットの評価。
 - Windows 環境での動作。
