@@ -3,7 +3,7 @@
 `anomaly-detection-playground` は、産業用の**画像異常検知（Visual Anomaly Detection）**を、精度・学習時間・推論速度・メモリ効率の観点で比較する実験リポジトリです。特に**CPUだけで学習・推論できるか**と、**高解像度画像上の微小欠陥**を重視します。
 
 > [!IMPORTANT]
-> **初期ベースラインです。** Anomalib 2.7.0 の PaDiM / PatchCore を呼び出し、CPUの学習・テスト工程の時間・ピークRSSと精度指標をJSONに保存します。EfficientAD、画像1枚ごとの推論P50/P95、タイル分割、ONNX Runtime / OpenVINO比較は今後追加します。実画像での動作と計測値はまだ未検証です。
+> **初期ベースラインです。** Anomalib 2.7.0 の PaDiM / PatchCore を呼び出し、CPUの学習・テスト工程の時間・ピークRSSと精度指標をJSONに保存します。Linux（8 vCPU、GPUなし）上で MVTec AD の bottle / grid カテゴリを用いた CPU のみの学習・テスト完走を確認済みです（[検証記録](docs/verification/issue5_cpu_baseline.md)）。Windows は未検証です。EfficientAD、画像1枚ごとの推論P50/P95、タイル分割、ONNX Runtime / OpenVINO比較は今後追加します。
 
 ## 評価データセット
 
@@ -25,8 +25,15 @@ Python 3.11～3.13を想定しています（Windows/Linuxを想定、実機で�
 python -m venv .venv
 # Windows PowerShellの場合: .venv\Scripts\Activate.ps1
 # Linux/macOSの場合: source .venv/bin/activate
-python -m pip install -e .
+# CPU版PyTorchを先に入れる（CUDA版の巨大なホイールを避ける）
+python -m pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+python -m pip install --no-cache-dir -e .
+# 計測から初回ダウンロードを除外するため、backbone重みを事前取得する
+python scripts/run_anomalib.py --model padim --prefetch-weights
+python scripts/run_anomalib.py --model patchcore --prefetch-weights
 ```
+
+MVTec AD は[公式ダウンロードページ](https://www.mvtec.com/company/research/datasets/mvtec-ad/downloads)でカテゴリ単位のアーカイブ（例：`bottle.tar.xz`、約150MB）を取得し、`datasets/MVTecAD/` 配下で展開してアーカイブを削除する方法でも配置できます（全カテゴリ一括のアーカイブは約4.9GB）。詳細は[検証記録](docs/verification/issue5_cpu_baseline.md)を参照してください。
 
 MVTec ADは先にダウンロードします。Anomalibのデータセット取得機能を使う例：
 
