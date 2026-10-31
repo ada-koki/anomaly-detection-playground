@@ -1,0 +1,6 @@
+condition,status,dataset,coreset_mode,chunk_images,max_train_feature_mib,train_images,memory_bank_rows,image_auroc_engine,pixel_auroc_engine,image_auroc_raw,pixel_auroc_raw,train_stage_s,train_peak_rss_mib,process_peak_rss_mib,mem_available_mib_at_start,estimate_peak_mib,estimate_within_budget,model_p50_ms,e2e_p50_ms,e2e_p95_ms,threads,other_process_interference,run_id
+ad2_vial_patchcore_chunked100,ok,mvtec_ad2,chunked,100,,291,29798,0.863946,0.943753,0.863946,0.943404,586.405,2241.39,2241.39,8346.91,1485.54,True,258.1,282.1,1222.8,8,no,20261031T190316Z-1814b883
+mvtecad_bottle_patchcore_chunked20,ok,mvtec_ad,chunked,20,,209,21401,1.0,0.985721,1.0,0.985538,39.22,1135.98,1212.32,8579.63,384.54,True,194.3,215.8,1231.1,8,no,20261031T182505Z-72e46020
+mvtecad_bottle_patchcore_global,ok,mvtec_ad,global,,,209,21401,1.0,0.985694,1.0,0.985522,276.773,3209.56,3209.66,8396.55,2755.37,True,158.1,183.0,250.1,8,no,20261031T181935Z-19645561
+visa_candle_patchcore_chunked100,ok,visa,chunked,100,4000.0,900,92160,0.967187,0.991786,0.967187,0.991567,1748.553,2572.51,2572.51,6803.9,1850.94,True,649.4,665.0,853.6,8,no,20261031T182701Z-24d16eda
+visa_candle_patchcore_global_guard,failed,visa,global,,6000.0,900,,,,,,,,1289.26,7998.65,11991.8,False,,,,8,no,20261031T181858Z-a773908b
