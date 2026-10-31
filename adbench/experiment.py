@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-KNOWN_MODELS = ("padim", "patchcore")
+KNOWN_MODELS = ("padim", "patchcore", "efficient_ad")
 
 # run_key と argv の対応を壊すため、設定側から上書きできない引数。
 FORBIDDEN_EXTRA_ARGS = {

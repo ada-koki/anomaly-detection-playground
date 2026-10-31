@@ -27,6 +27,11 @@
       ],
       "coreset_sampling_ratio": 0.1,
       "num_neighbors": 9
+    },
+    "efficient_ad": {
+      "model_size": "small",
+      "max_epochs": 1,
+      "max_steps": -1
     }
   }
 }

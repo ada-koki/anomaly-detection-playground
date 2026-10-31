@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 import sys
 import time
 import traceback
@@ -47,10 +49,12 @@ from adbench.report import (
     json_safe,
     write_report,
 )
+from adbench.training_mode import determine_training_mode
 
 # サンプリングで記録した各段階のピークRSSキー。
 _SAMPLED_PEAK_KEYS = (
     "train_peak_rss_mib_sampled",
+    "validate_peak_rss_mib_sampled",
     "test_peak_rss_mib_sampled",
     "raw_eval_peak_rss_mib_sampled",
     "latency_peak_rss_mib_sampled",
@@ -68,7 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", choices=("mvtec_ad", "mvtec_4k"), default=None)
     parser.add_argument("--dataset-root", type=Path, default=None)
     parser.add_argument("--category", default="bottle")
-    parser.add_argument("--model", choices=("padim", "patchcore"), default="padim")
+    parser.add_argument(
+        "--model",
+        choices=("padim", "patchcore", "efficient_ad"),
+        default="padim",
+    )
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     parser.add_argument("--image-size", type=int, default=None)
     parser.add_argument("--train-batch-size", type=int, default=None)
@@ -120,6 +128,48 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="PatchCore用の近傍数。プロトコル設定を上書きする場合に指定",
+    )
+    parser.add_argument(
+        "--imagenet-dir",
+        type=Path,
+        default=Path("datasets/imagenette2"),
+        help=(
+            "EfficientADの教師学習に使うImageNette展開先。"
+            "自動ダウンロードさせないため、実行前に配置を確認します"
+        ),
+    )
+    parser.add_argument(
+        "--efficientad-model-size",
+        choices=("small", "medium"),
+        default=None,
+        help="EfficientADのモデルサイズ。省略時はプロトコル値（既定 small）",
+    )
+    parser.add_argument(
+        "--max-epochs",
+        type=int,
+        default=None,
+        help=(
+            "EfficientADの最大エポック数。省略時はプロトコル値。"
+            "PaDiM/PatchCoreでは1のみ許可"
+        ),
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help=(
+            "EfficientADの最大ステップ数。省略時はプロトコル値。"
+            "-1は無制限。PaDiM/PatchCoreでは指定不可"
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help=(
+            "学習済みチェックポイントを読み込み、学習をスキップして"
+            "test・レイテンシ・raw評価のみ行う"
+        ),
     )
     parser.add_argument(
         "--prefetch-weights",
@@ -190,6 +240,14 @@ def _collect_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
         overrides[f"{model_prefix}.coreset_sampling_ratio"] = args.coreset_sampling_ratio
     if args.num_neighbors is not None:
         overrides[f"{model_prefix}.num_neighbors"] = args.num_neighbors
+
+    if args.model == "efficient_ad":
+        if args.efficientad_model_size is not None:
+            overrides[f"{model_prefix}.model_size"] = args.efficientad_model_size
+        if args.max_epochs is not None:
+            overrides[f"{model_prefix}.max_epochs"] = args.max_epochs
+        if args.max_steps is not None:
+            overrides[f"{model_prefix}.max_steps"] = args.max_steps
     return overrides
 
 
@@ -214,6 +272,29 @@ def _resolve_args(
     args.layers = list(model_config.layers) if model_config.layers is not None else None
     args.coreset_sampling_ratio = model_config.coreset_sampling_ratio
     args.num_neighbors = model_config.num_neighbors
+
+    if args.model == "efficient_ad":
+        args.efficientad_model_size = (
+            model_config.model_size
+            or args.efficientad_model_size
+            or "small"
+        )
+        if args.max_epochs is None:
+            args.max_epochs = (
+                model_config.max_epochs
+                if model_config.max_epochs is not None
+                else 1
+            )
+        if args.max_steps is None:
+            args.max_steps = (
+                model_config.max_steps
+                if model_config.max_steps is not None
+                else -1
+            )
+    else:
+        # メモリバンク系は1エポックで十分であり、条件差を作らない。
+        args.max_epochs = 1
+        args.max_steps = -1
 
     backbone_override_key = f"models.{args.model}.backbone"
     if backbone_override_key in overrides:
@@ -248,6 +329,11 @@ def parse_and_resolve(
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # 解決後に既定値へ上書きされるため、明示指定の有無とCLI値を退避する。
+    args.max_epochs_cli = args.max_epochs
+    args.max_steps_cli = args.max_steps
+    args.efficientad_model_size_cli = args.efficientad_model_size
+
     protocol_path = args.protocol if args.protocol is not None else DEFAULT_PROTOCOL_PATH
     overrides: dict[str, Any] = {}
     try:
@@ -264,6 +350,50 @@ def parse_and_resolve(
 
 
 def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
+    max_epochs_cli = getattr(args, "max_epochs_cli", None)
+    max_steps_cli = getattr(args, "max_steps_cli", None)
+
+    if args.model != "efficient_ad":
+        if max_epochs_cli is not None and max_epochs_cli != 1:
+            parser.error(
+                "--max-epochs は efficient_ad でのみ、1以外の値を指定できます。"
+                "PaDiM/PatchCore は 1 エポック固定です。"
+            )
+        if max_steps_cli is not None:
+            parser.error(
+                "--max-steps は efficient_ad でのみ指定できます。"
+                "PaDiM/PatchCore では条件差を作らないため指定できません。"
+            )
+    else:
+        if getattr(args, "efficientad_model_size", None) not in (None, "small", "medium"):
+            parser.error("--efficientad-model-size が不正です")
+        if args.max_epochs < 1:
+            parser.error("--max-epochs には1以上を指定してください")
+        if args.max_steps == 0 or args.max_steps < -1:
+            parser.error("--max-steps には -1（無制限）または1以上を指定してください")
+        if args.train_batch_size != 1:
+            parser.error(
+                "EfficientAD は train_batch_size=1 を要求します。"
+                "プロトコルまたは --train-batch-size を 1 にしてください。"
+            )
+        if (
+            args.checkpoint is None
+            and not args.prefetch_weights
+            and not args.manifest_only
+            and not Path(args.imagenet_dir).is_dir()
+        ):
+            parser.error(
+                f"{args.imagenet_dir} が見つかりません。EfficientADの自動ダウンロードを"
+                "計測に含めないため、ImageNette (imagenette2) を事前に配置してください。"
+                "取得手順は docs/efficientad.md を参照してください。"
+            )
+
+    if args.checkpoint is not None:
+        if not args.checkpoint.is_file():
+            parser.error(f"--checkpoint のファイルが見つかりません: {args.checkpoint}")
+        if args.prefetch_weights:
+            parser.error("--checkpoint と --prefetch-weights は同時に指定できません")
+
     for key in ("image_size", "train_batch_size", "eval_batch_size"):
         if getattr(args, key) < 1:
             parser.error(f"--{key.replace('_', '-')} には1以上を指定してください")
@@ -318,10 +448,26 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
 
 
 def _create_model(args: argparse.Namespace) -> Any:
-    from anomalib.models import Padim, Patchcore
+    from anomalib.models import EfficientAd, Padim, Patchcore
 
-    model_cls = {"padim": Padim, "patchcore": Patchcore}[args.model]
-    model_kwargs: dict[str, Any] = {
+    model_cls = {
+        "padim": Padim,
+        "patchcore": Patchcore,
+        "efficient_ad": EfficientAd,
+    }[args.model]
+
+    if args.model == "efficient_ad":
+        model_kwargs: dict[str, Any] = {
+            "imagenet_dir": str(args.imagenet_dir),
+            "model_size": args.efficientad_model_size,
+            "pre_processor": model_cls.configure_pre_processor(
+                image_size=(args.image_size, args.image_size)
+            ),
+            "visualizer": False,
+        }
+        return model_cls(**model_kwargs)
+
+    model_kwargs = {
         "pre_processor": model_cls.configure_pre_processor(
             image_size=(args.image_size, args.image_size)
         ),
@@ -337,6 +483,28 @@ def _create_model(args: argparse.Namespace) -> Any:
         if args.num_neighbors is not None:
             model_kwargs["num_neighbors"] = args.num_neighbors
     return model_cls(**model_kwargs)
+
+
+def _load_checkpoint_model(args: argparse.Namespace) -> Any:
+    """学習済みチェックポイントをCPUへ読み込む。"""
+    from anomalib.models import EfficientAd, Padim, Patchcore
+
+    model_cls = {
+        "padim": Padim,
+        "patchcore": Patchcore,
+        "efficient_ad": EfficientAd,
+    }[args.model]
+    return model_cls.load_from_checkpoint(str(args.checkpoint), map_location="cpu")
+
+
+def _prepare_efficientad_pretrained_model(model: Any) -> None:
+    prepare = getattr(model, "prepare_pretrained_model", None)
+    if not callable(prepare):
+        raise RuntimeError(
+            "EfficientAd に prepare_pretrained_model() が見つかりません。"
+            "Anomalib のバージョンを確認してください。"
+        )
+    prepare()
 
 
 def _create_datamodule(args: argparse.Namespace, root: Path) -> Any:
@@ -467,6 +635,145 @@ def _build_protocol_report(
     }
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _relative_repo_path(path: Path) -> str:
+    """リポジトリルートからの相対表記を返す。
+
+    リポジトリ外を指す場合は、絶対パスやユーザー名をレポートへ残さないため
+    ファイル名だけを返す。
+    """
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        resolved = Path(path)
+    try:
+        return str(resolved.relative_to(_REPO_ROOT))
+    except ValueError:
+        relative = os.path.relpath(resolved, _REPO_ROOT)
+        if relative.startswith(".."):
+            return resolved.name
+        return relative
+
+
+def _get_pretrained_weights_dir() -> Path | None:
+    """Anomalib の教師重みキャッシュディレクトリを取得する。"""
+    import importlib
+
+    candidates = (
+        "anomalib.models.image.efficient_ad.lightning_model",
+        "anomalib.models.image.efficient_ad.utils",
+        "anomalib.models.image.efficient_ad",
+        "anomalib.utils.path",
+    )
+    for module_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        function = getattr(module, "get_pretrained_weights_dir", None)
+        if callable(function):
+            try:
+                return Path(function())
+            except Exception:
+                continue
+    return None
+
+
+def _teacher_weights_path(model_size: str) -> Path | None:
+    base = _get_pretrained_weights_dir()
+    if base is None:
+        return None
+    return (
+        base
+        / "efficientad_pretrained_weights"
+        / f"pretrained_teacher_{model_size}.pth"
+    )
+
+
+def _count_imagenet_images(imagenet_dir: Path) -> int | None:
+    if not Path(imagenet_dir).is_dir():
+        return None
+    try:
+        from torchvision.datasets import ImageFolder
+
+        return len(ImageFolder(str(imagenet_dir)))
+    except Exception:
+        return None
+
+
+def _build_efficientad_model_specific(
+    args: argparse.Namespace,
+    *,
+    train_stage_seconds: float | None,
+    trained_steps: int | None,
+    validation_called: bool,
+) -> dict[str, Any]:
+    "#### EfficientAD固有の前提条件・外部依存をレポート用にまとめる。"
+    weights_path = _teacher_weights_path(args.efficientad_model_size)
+    weights_sha256: str | None = None
+    if weights_path is not None and weights_path.is_file():
+        try:
+            weights_sha256 = _sha256_file(weights_path)
+        except OSError:
+            weights_sha256 = None
+
+    train_seconds_per_step: float | None = None
+    if (
+        train_stage_seconds is not None
+        and trained_steps is not None
+        and trained_steps > 0
+    ):
+        train_seconds_per_step = round(train_stage_seconds / trained_steps, 6)
+
+    return {
+        "model_size": args.efficientad_model_size,
+        "imagenet_dir": _relative_repo_path(Path(args.imagenet_dir)),
+        "imagenet_image_count": _count_imagenet_images(Path(args.imagenet_dir)),
+        "teacher_weights_path": (
+            weights_path.name if weights_path is not None else None
+        ),
+        "teacher_weights_sha256": weights_sha256,
+        "max_epochs": args.max_epochs,
+        "max_steps": args.max_steps,
+        "trained_steps": trained_steps,
+        "train_seconds_per_step": train_seconds_per_step,
+        "train_seconds_per_step_note": (
+            "train_stage_seconds を trained_steps で割った実測由来の計算値です。"
+            "ステップ数・モデルサイズ・学習条件が異なる値と同等比較しないでください。"
+        ),
+        "paper_default_steps": 70000,
+        "validation_called_after_fit": validation_called,
+        "external_data_dependencies": {
+            "imagenette": {
+                "name": "ImageNette (imagenette2)",
+                "url": "https://s3.amazonaws.com/fast-ai-imageclas/imagenette2.tgz",
+                "note": (
+                    "ImageNet のサブセットです。ImageNet の利用条件に従う必要があり、"
+                    "配布元・原データのライセンスを確認してください。"
+                ),
+            },
+            "teacher_weights": {
+                "source": "anomalib GitHub Releases (efficientad_pretrained_weights)",
+                "url": (
+                    "https://github.com/open-edge-platform/anomalib/releases/download/"
+                    "efficientad_pretrained_weights/efficientad_pretrained_weights.zip"
+                ),
+                "note": (
+                    "ImageNet 由来の蒸留を含みます。配布元で利用条件・ライセンスを"
+                    "確認してください。"
+                ),
+            },
+        },
+    }
+
+
 def _run(
     args: argparse.Namespace,
     root: Path,
@@ -527,9 +834,22 @@ def _run_stages(
         report["status"] = "ok"
         return
 
-    model = _create_model(args)
+    checkpoint_mode = args.checkpoint is not None
+
+    if checkpoint_mode:
+        model = _load_checkpoint_model(args)
+    else:
+        model = _create_model(args)
 
     if args.prefetch_weights:
+        if args.model == "efficient_ad":
+            _prepare_efficientad_pretrained_model(model)
+            report["model_specific"] = _build_efficientad_model_specific(
+                args,
+                train_stage_seconds=None,
+                trained_steps=None,
+                validation_called=False,
+            )
         report["status"] = "ok"
         return
 
@@ -539,20 +859,85 @@ def _run_stages(
     engine_kwargs: dict[str, Any] = {
         "accelerator": args.device,
         "devices": 1,
-        "max_epochs": 1,
+        "max_epochs": args.max_epochs if args.model == "efficient_ad" else 1,
         "default_root_dir": output,
         "logger": False,
         "num_sanity_val_steps": 0,
     }
+    if args.model == "efficient_ad" and args.max_steps != -1:
+        engine_kwargs["max_steps"] = args.max_steps
     engine = Engine(**engine_kwargs)
 
-    with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as fit_memory:
-        fit_start = time.perf_counter()
-        engine.fit(model=model, datamodule=datamodule)
-        fit_seconds = time.perf_counter() - fit_start
-    memory["train_peak_rss_mib_sampled"] = fit_memory["peak_rss_mib"]
+    fit_seconds: float | None = None
+    trained_steps: int | None = None
 
-    _record_manifest(report, datamodule, root, output, args)
+    if checkpoint_mode:
+        # 学習をスキップする。ckpt に PostProcessor 統計が保存されている前提で、
+        # 追加の validate は呼ばず、チェックポイント内の統計を使う。
+        datamodule.setup("fit")
+        datamodule.setup("test")
+        report["train_stage_seconds"] = None
+        report["train_peak_host_rss_mib_sampled"] = None
+        memory["train_peak_rss_mib_sampled"] = None
+        report["validation_after_fit"] = False
+        report["validation_note"] = (
+            "--checkpoint 指定時は学習も追加の validate も実行せず、"
+            "チェックポイントに保存された PostProcessor 統計を使用します。"
+        )
+        report["checkpoint_inference"] = {
+            "checkpoint_sha256": _sha256_file(Path(args.checkpoint)),
+            "validation_called": False,
+            "uses_statistics_from_checkpoint": True,
+            "note": (
+                "チェックポイント内の統計に依存します。ckpt 作成時の検証集合・"
+                "前処理条件が異なる場合は engine.test の閾値依存指標を比較できません。"
+            ),
+        }
+        _record_manifest(report, datamodule, root, output, args)
+        if args.model == "efficient_ad":
+            report["model_specific"] = _build_efficientad_model_specific(
+                args,
+                train_stage_seconds=None,
+                trained_steps=None,
+                validation_called=False,
+            )
+    else:
+        with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as fit_memory:
+            fit_start = time.perf_counter()
+            engine.fit(model=model, datamodule=datamodule)
+            fit_seconds = time.perf_counter() - fit_start
+        memory["train_peak_rss_mib_sampled"] = fit_memory["peak_rss_mib"]
+
+        trainer = getattr(engine, "trainer", None)
+        if trainer is not None:
+            trained_steps = int(getattr(trainer, "global_step", 0))
+
+        report["train_stage_seconds"] = round(fit_seconds, 3)
+        report["train_peak_host_rss_mib_sampled"] = fit_memory["peak_rss_mib"]
+
+        if args.model == "efficient_ad":
+            # max_steps 指定時にエポック末の validation が走らない場合でも、
+            # quantile と PostProcessor 統計を必ず計算するため追加で validate する。
+            with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as validate_memory:
+                validate_start = time.perf_counter()
+                engine.validate(model=model, datamodule=datamodule)
+                validate_seconds = time.perf_counter() - validate_start
+            memory["validate_peak_rss_mib_sampled"] = validate_memory["peak_rss_mib"]
+            report["validate_stage_seconds"] = round(validate_seconds, 3)
+            report["validation_after_fit"] = True
+            report["validation_note"] = (
+                "EfficientAD では max_steps 指定時に validation が走らない場合に備え、"
+                "fit 後に engine.validate を明示的に1回実行し、good 画像から"
+                "quantile と PostProcessor 統計を確保しています。"
+            )
+            report["model_specific"] = _build_efficientad_model_specific(
+                args,
+                train_stage_seconds=fit_seconds,
+                trained_steps=trained_steps,
+                validation_called=True,
+            )
+
+        _record_manifest(report, datamodule, root, output, args)
 
     with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as test_memory:
         test_start = time.perf_counter()
@@ -562,13 +947,11 @@ def _run_stages(
 
     report.update(
         {
-            "train_stage_seconds": round(fit_seconds, 3),
             "test_stage_seconds": round(test_seconds, 3),
             "test_metrics": json_safe(test_metrics),
         }
     )
     # 旧キーは互換のため残す。
-    report["train_peak_host_rss_mib_sampled"] = fit_memory["peak_rss_mib"]
     report["test_peak_host_rss_mib_sampled"] = test_memory["peak_rss_mib"]
 
     # engine.test のメトリクスは PostProcessor の正規化（val由来）に依存するため、
@@ -641,6 +1024,10 @@ def main(argv: list[str] | None = None) -> int:
     report_path = output / "report.json"
     protocol_report = _build_protocol_report(protocol, protocol_path, overrides)
     report = build_base_report(args, root, run_id, argv_list, protocol_report)
+    report["training_mode"] = determine_training_mode(args.checkpoint)
+    if args.checkpoint is not None:
+        report["checkpoint_sha256"] = _sha256_file(args.checkpoint)
+        report["train_stage_seconds"] = None
 
     try:
         _run(args, root, output, report)
