@@ -1,6 +1,7 @@
-"""CPU-first Anomalib baseline runner.
+"""AnomalibによるCPU優先の異常検知ベンチマーク。
 
-This measures whole fit/test stages and sampled host RSS, NOT per-image inference latency.
+学習・テスト工程全体の時間と、サンプリングしたホストメモリ（RSS）を計測する。
+画像1枚当たりの推論時間は計測しない。
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from typing import Any, Iterator
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Anomalib CPU-first anomaly detection baseline")
+    parser = argparse.ArgumentParser(description="Anomalibを使ったCPU優先の異常検知ベンチマーク")
     parser.add_argument("--dataset", choices=("mvtec_ad", "mvtec_4k"), default="mvtec_ad")
     parser.add_argument("--dataset-root", type=Path, default=None)
     parser.add_argument("--category", default="bottle")
@@ -32,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train-batch-size", type=int, default=1)
     parser.add_argument("--eval-batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--cpu-threads", type=int, default=0, help="0: PyTorch default")
+    parser.add_argument("--cpu-threads", type=int, default=0, help="0の場合はPyTorchの既定値を使用")
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=Path, default=Path("results"))
@@ -42,20 +43,20 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
     for key in ("image_size", "train_batch_size", "eval_batch_size"):
         if getattr(args, key) < 1:
-            parser.error(f"--{key.replace('_', '-')} must be >= 1")
+            parser.error(f"--{key.replace('_', '-')} には1以上を指定してください")
     if args.num_workers < 0 or args.cpu_threads < 0:
-        parser.error("--num-workers and --cpu-threads must be >= 0")
+        parser.error("--num-workers と --cpu-threads には0以上を指定してください")
     if not 0 < args.val_fraction < 1:
-        parser.error("--val-fraction must be strictly between 0 and 1")
+        parser.error("--val-fraction には0より大きく1より小さい値を指定してください")
 
     default_root = "MVTecAD" if args.dataset == "mvtec_ad" else "MVTec-4K"
     root = args.dataset_root or Path("datasets") / default_root
 
-    # Require the data to be present before measurement (exclude download time).
+    # ダウンロード時間を計測に含めないため、実行前にデータセットの配置を確認する。
     if not all((root / args.category / split / "good").is_dir() for split in ("train", "test")):
         parser.error(
-            f"dataset train/good or test/good missing under {root / args.category}; "
-            "download/extract it first (see README)"
+            f"{root / args.category} に train/good または test/good が見つかりません。"
+            "READMEを参照してデータセットをダウンロード・展開してください。"
         )
     return root
 
@@ -102,7 +103,7 @@ def sampled_rss() -> Iterator[dict[str, float]]:
 
 
 def json_safe(value: Any) -> Any:
-    """Convert scalar Lightning test metrics into JSON-friendly values."""
+    """Lightningの評価指標をJSONに保存できる形式へ変換する。"""
     if isinstance(value, dict):
         return {str(k): json_safe(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
@@ -124,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = validate_args(args, parser)
 
-    # Imports are delayed, so --help and unit tests need no heavyweight deps.
+    # --helpや基本テストで重い依存ライブラリを読み込まないよう、importを遅延する。
     import torch
     from anomalib.data import MVTecAD
     from anomalib.data.utils import ValSplitMode
@@ -135,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cpu_threads:
         torch.set_num_threads(args.cpu_threads)
     if args.device == "cuda" and not torch.cuda.is_available():
-        parser.error("CUDA requested but unavailable; use --device cpu")
+        parser.error("CUDAを利用できません。--device cpu を指定してください")
 
     model_cls = {"padim": Padim, "patchcore": Patchcore}[args.model]
     model = model_cls(
@@ -206,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     report_path = output / "report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    print(f"Wrote: {report_path}")
+    print(f"結果を保存しました: {report_path}")
     return 0
 
 

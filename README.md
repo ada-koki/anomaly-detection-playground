@@ -1,6 +1,6 @@
-# anomaly-detection-playground
+# 異常検知アルゴリズムの実験・評価基盤
 
-産業用の**画像異常検知 (Visual Anomaly Detection)** を、精度・学習時間・推論速度・メモリ効率の観点で比較する実験リポジトリです。特に**CPUだけで学習・推論できるか**と、**高解像度画像上の微小欠陥**を重視します。
+`anomaly-detection-playground` は、産業用の**画像異常検知（Visual Anomaly Detection）**を、精度・学習時間・推論速度・メモリ効率の観点で比較する実験リポジトリです。特に**CPUだけで学習・推論できるか**と、**高解像度画像上の微小欠陥**を重視します。
 
 > [!IMPORTANT]
 > **初期ベースラインです。** Anomalib 2.7.0 の PaDiM / PatchCore を呼び出し、CPUの学習・テスト工程の時間・ピークRSSと精度指標をJSONに保存します。EfficientAD、画像1枚ごとの推論P50/P95、タイル分割、ONNX Runtime / OpenVINO比較は今後追加します。実画像での動作と計測値はまだ未検証です。
@@ -23,8 +23,8 @@ Python 3.11～3.13を想定しています（Windows/Linuxを想定、実機で�
 
 ```bash
 python -m venv .venv
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-# Linux/macOS: source .venv/bin/activate
+# Windows PowerShellの場合: .venv\Scripts\Activate.ps1
+# Linux/macOSの場合: source .venv/bin/activate
 python -m pip install -e .
 ```
 
@@ -75,4 +75,4 @@ python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model patc
 
 このリポジトリのコードは [MIT](LICENSE) です。画像データおよび事前学習済み重みのライセンスは別です。MVTec AD は非商用の CC BY-NC-SA 4.0。MVTec-4K 配布ページには Apache-2.0 表記がありますが、派生元の権利・利用条件も確認してください。データと重みはGit管理しません。
 
-参考：[Anomalib](https://github.com/open-edge-platform/anomalib) / [Anomalib docs](https://anomalib.readthedocs.io/en/latest/) / [HiAD](https://github.com/cnulab/HiAD)
+参考：[Anomalib](https://github.com/open-edge-platform/anomalib) / [Anomalib公式ドキュメント](https://anomalib.readthedocs.io/en/latest/) / [HiAD](https://github.com/cnulab/HiAD)

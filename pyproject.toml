@@ -1,7 +1,7 @@
 [project]
 name = "anomaly-detection-playground"
 version = "0.1.0"
-description = "CPU-first industrial visual anomaly detection benchmarks"
+description = "産業用画像異常検知のCPU優先ベンチマーク"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "anomalib[cpu]==2.7.0",

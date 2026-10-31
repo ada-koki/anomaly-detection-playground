@@ -1,4 +1,4 @@
-# Downloaded data and generated benchmark files
+# ダウンロードしたデータとベンチマークの生成物
 /datasets/
 /results/
 /artifacts/
@@ -8,7 +8,7 @@
 *.pth
 *.onnx
 
-# Python
+# Pythonの一時ファイル
 .venv/
 __pycache__/
 *.py[cod]

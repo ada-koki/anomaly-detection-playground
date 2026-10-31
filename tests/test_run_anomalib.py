@@ -1,4 +1,4 @@
-"""Dependency-free tests for the benchmark runner CLI and JSON conversion."""
+"""外部依存ライブラリなしで実行できる、CLIとJSON変換の基本テスト。"""
 
 import importlib.util
 import tempfile
