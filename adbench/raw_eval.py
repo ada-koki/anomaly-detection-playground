@@ -10,6 +10,8 @@ Anomalib 2.7.0 の PostProcessor は検証集合（val）から ``image_min`` /
 
 本モジュールは PostProcessor を通さない生の ``pred_score`` と ``anomaly_map`` から
 image AUROC と pixel AUROC を計算し、正規化の影響を排除した検証用の値を得る。
+``collect_per_image=True`` を指定すると、Issue #14 の欠陥サイズ別レポート用に
+1画像ごとのレコード（``PerImageRecord``）も収集する。
 
 重い依存（torch, scikit-learn, anomalib, numpy, PIL）はすべて関数内で遅延 import
 するため、本モジュールの import 自体は軽い。
@@ -21,6 +23,12 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .defect_size import (
+    PerImageRecord,
+    classify_size,
+    is_finite_number,
+    mask_stats,
+)
 from .preprocess import apply_pre_processor, describe_preprocess
 
 # 256px×100枚相当の画素数。メモリ見積りの目安として notes に記録する。
@@ -213,11 +221,101 @@ def _label_index(record: Mapping[str, Any]) -> int:
         return 0 if label == "good" else 1
 
 
+def _defect_type_from_image_path(image_path: str) -> str:
+    """image_path の親ディレクトリ名を異常種別として返す。
+
+    例: ``.../test/broken_small/000.png`` → ``broken_small``、正常は ``good``。
+    """
+    text = str(image_path).replace("\\", "/")
+    parent = text.rsplit("/", 1)[0] if "/" in text else ""
+    name = parent.rsplit("/", 1)[-1] if parent else ""
+    return name or "unknown"
+
+
+def _finite_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _build_per_image_record(
+    *,
+    image_path: str,
+    label: int,
+    score: float,
+    mask_available: bool,
+    mask_stats_value: dict[str, Any] | None,
+    anomaly_map: Any,
+    mask: Any,
+    pixel_threshold: float | None,
+) -> PerImageRecord:
+    """1画像分の ``PerImageRecord`` を組み立てる。
+
+    ``mask_stats_value`` はリサイズ前の元解像度マスクから計算したものを渡す。
+    ``map_max_in_mask`` / ``map_max_outside_mask`` は anomaly_map の解像度へ
+    最近傍リサイズしたマスクで計算する。
+    """
+    import numpy as np
+    import torch
+
+    mask_px_at_map_resolution: int | None = None
+    map_max_in_mask: float | None = None
+    map_max_outside_mask: float | None = None
+
+    in_mask = mask > 0
+    if mask_available:
+        mask_px_at_map_resolution = int(np.count_nonzero(in_mask))
+
+    outside = ~in_mask
+    if bool(outside.any()):
+        outside_values = anomaly_map[torch.from_numpy(outside)]
+        if outside_values.numel():
+            map_max_outside_mask = float(outside_values.max().item())
+
+    if mask_px_at_map_resolution:
+        inside_values = anomaly_map[torch.from_numpy(in_mask)]
+        if inside_values.numel():
+            map_max_in_mask = float(inside_values.max().item())
+
+    normal_fp_pixel_ratio: float | None = None
+    if label == 0 and is_finite_number(pixel_threshold):
+        hits = (anomaly_map >= float(pixel_threshold)).to(torch.float64)  # type: ignore[arg-type]
+        if hits.numel():
+            normal_fp_pixel_ratio = float(hits.mean().item())
+
+    size_band: str | None = None
+    if mask_stats_value is not None:
+        ratio = mask_stats_value.get("area_ratio")
+        if ratio is not None:
+            size_band = classify_size(ratio)
+
+    return PerImageRecord(
+        image_path=image_path,
+        defect_type=_defect_type_from_image_path(image_path),
+        label=int(label),
+        score=float(score),
+        mask_available=bool(mask_available),
+        mask_stats=mask_stats_value,
+        size_band=size_band,
+        map_max_in_mask=map_max_in_mask,
+        map_max_outside_mask=map_max_outside_mask,
+        normal_fp_pixel_ratio=normal_fp_pixel_ratio,
+        mask_px_at_map_resolution=mask_px_at_map_resolution,
+    )
+
+
 def evaluate_raw_score_metrics(
     model: Any,
     samples: Any,
     *,
     device: str = "cpu",
+    collect_per_image: bool = False,
+    image_threshold: float | None = None,
+    pixel_threshold: float | None = None,
 ) -> dict[str, Any]:
     """学習済みモデルでtest画像を1枚ずつ処理し、生スコアのメトリクスを返す。
 
@@ -229,16 +327,23 @@ def evaluate_raw_score_metrics(
         model: 学習済みのAnomalibモデル。
         samples: ``datamodule.test_data.samples``（pandas DataFrame など）。
         device: 推論デバイス（``"cpu"`` / ``"cuda"``）。
+        collect_per_image: True のとき画像ごとの ``PerImageRecord`` を収集し、
+            返り値に ``"per_image_records"`` を追加する（JSON 化は呼び出し側）。
+        image_threshold: 画像スコアの閾値（検証集合由来）。返り値に記録するだけ。
+        pixel_threshold: anomaly_map の閾値（検証集合由来）。正常画像の
+            ``normal_fp_pixel_ratio`` の計算に使う。
 
     Returns:
         image/pixel AUROC、件数、同値スコア数、注意書きを含む辞書。
+        ``collect_per_image=True`` の場合は ``per_image_records``、
+        ``per_image_thresholds``、``mask_vanished_after_resize`` も含む。
 
     Raises:
         ValueError: samples が空、またはレコードへ変換できない場合。
         RuntimeError: モデル出力に必要な項目が無い場合。
     """
-    records = _sample_records(samples)
-    if not records:
+    sample_records = _sample_records(samples)
+    if not sample_records:
         raise ValueError("テスト画像一覧が空です")
 
     import numpy as np
@@ -255,9 +360,11 @@ def evaluate_raw_score_metrics(
     map_tensors: list[Any] = []
     mask_chunks: list[Any] = []
     map_size: tuple[int, int] | None = None
+    per_image_records: list[PerImageRecord] = []
+    mask_vanished = 0
 
     with torch.inference_mode():
-        for record in records:
+        for record in sample_records:
             image_path = _text_or_none(record.get("image_path"))
             if image_path is None:
                 raise ValueError("samples に image_path がありません")
@@ -272,8 +379,10 @@ def evaluate_raw_score_metrics(
             preprocessed = preprocessed.to(torch_device)
 
             inference = model.model(preprocessed)
-            image_scores.append(_pred_score_scalar(inference))
-            image_labels.append(_label_index(record))
+            score = _pred_score_scalar(inference)
+            label = _label_index(record)
+            image_scores.append(score)
+            image_labels.append(label)
 
             anomaly_map = _anomaly_map_tensor(inference)
             height, width = int(anomaly_map.shape[0]), int(anomaly_map.shape[1])
@@ -286,12 +395,32 @@ def evaluate_raw_score_metrics(
                 )
 
             mask_path = _text_or_none(record.get("mask_path"))
+            mask_stats_value: dict[str, Any] | None = None
             if mask_path is None:
                 mask = np.zeros((height, width), dtype=np.uint8)
             else:
                 with PILImage.open(mask_path) as mask_image:
-                    mask_array = np.asarray(mask_image.convert("L"))
-                mask = resize_mask_nearest(mask_array, height, width)
+                    original_mask = np.asarray(mask_image.convert("L"))
+                    mask = resize_mask_nearest(original_mask, height, width)
+                    if collect_per_image:
+                        # サイズ（面積・外接矩形・連結成分）はリサイズ前の元解像度で評価する。
+                        mask_stats_value = mask_stats(original_mask)
+                    del original_mask
+
+            if collect_per_image:
+                per_image_record = _build_per_image_record(
+                    image_path=image_path,
+                    label=label,
+                    score=score,
+                    mask_available=mask_path is not None,
+                    mask_stats_value=mask_stats_value,
+                    anomaly_map=anomaly_map,
+                    mask=mask,
+                    pixel_threshold=pixel_threshold,
+                )
+                per_image_records.append(per_image_record)
+                if per_image_record.mask_px_at_map_resolution == 0:
+                    mask_vanished += 1
 
             # inference_mode 内では .numpy() が使えないため、テンソルのまま溜める。
             map_tensors.append(anomaly_map.reshape(-1))
@@ -343,7 +472,22 @@ def evaluate_raw_score_metrics(
     if nan_scores:
         notes_parts.append(f"NaNのimageスコアが{nan_scores}件あります。")
 
-    return {
+    if collect_per_image:
+        notes_parts.append(
+            "per_image_records のマスク統計はリサイズ前の元解像度マスクで計算し、"
+            "map_max_in_mask / map_max_outside_mask は anomaly_map の解像度へ"
+            "最近傍リサイズしたマスクで計算しています。"
+        )
+        if mask_vanished:
+            notes_parts.append(
+                f"最近傍リサイズでマスクが消えた画像が{mask_vanished}件あります。"
+            )
+        if not is_finite_number(pixel_threshold):
+            notes_parts.append(
+                "pixel_threshold が未計算のため normal_fp_pixel_ratio は null です。"
+            )
+
+    result: dict[str, Any] = {
         "image_AUROC_raw": None if image_auroc is None else round(image_auroc, 6),
         "pixel_AUROC_raw": None if pixel_auroc is None else round(pixel_auroc, 6),
         "image_count": len(image_scores),
@@ -361,3 +505,11 @@ def evaluate_raw_score_metrics(
         "normalization": "none(post_processor を通さない生スコア)",
         "notes": " ".join(notes_parts),
     }
+    if collect_per_image:
+        result["per_image_records"] = per_image_records
+        result["per_image_thresholds"] = {
+            "image": _finite_float_or_none(image_threshold),
+            "pixel": _finite_float_or_none(pixel_threshold),
+        }
+        result["mask_vanished_after_resize"] = mask_vanished
+    return result
