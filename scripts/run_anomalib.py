@@ -2,17 +2,24 @@
 
 学習・テスト工程全体の時間、画像1枚あたりの推論レイテンシ、
 サンプリングしたホストメモリ（RSS）を計測する。
+
+GPU 学習＋CPU 推論は 1 プロセス内でデバイスを切り替えず、
+``--save-checkpoint`` で保存したチェックポイントを ``--checkpoint`` で
+読み込む 2 段階実行で実現する（Issue #11）。
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import os
+import shutil
 import sys
 import time
 import traceback
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +28,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from adbench.devices import (
+    EXECUTION_MODE_EXTERNAL_CHECKPOINT_UNKNOWN_TRAIN_DEVICE,
+    build_provenance,
+    classify_execution_mode,
+    detect_device_mismatch,
+    effective_device,
+    provenance_matches,
+    provenance_path_for,
+    read_provenance,
+    write_provenance,
+)
 from adbench.latency import measure_per_image_latency
 from adbench.manifest import (
     build_data_split_report,
@@ -169,6 +187,26 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "学習済みチェックポイントを読み込み、学習をスキップして"
             "test・レイテンシ・raw評価のみ行う"
+        ),
+    )
+    parser.add_argument(
+        "--save-checkpoint",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "学習後にチェックポイントを DIR/model.ckpt として保存し、"
+            "学習デバイスの来歴サイドカー（model.ckpt.provenance.json）を書き出す。"
+            "GPU学習＋CPU推論の2段階実行に使う。DIR はリポジトリ外を推奨"
+            "（重みはコミットしない）。--checkpoint とは併用不可"
+        ),
+    )
+    parser.add_argument(
+        "--allow-device-mismatch",
+        action="store_true",
+        help=(
+            "要求デバイスと観測デバイスが一致しない場合でも警告のみで続行する。"
+            "既定では report を保存した上で終了コード 3 で終了する"
         ),
     )
     parser.add_argument(
@@ -393,6 +431,21 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
             parser.error(f"--checkpoint のファイルが見つかりません: {args.checkpoint}")
         if args.prefetch_weights:
             parser.error("--checkpoint と --prefetch-weights は同時に指定できません")
+        if args.save_checkpoint is not None:
+            parser.error(
+                "--checkpoint と --save-checkpoint は同時に指定できません。"
+                "学習する実行で保存し、推論する実行で読み込む2段階に分けてください。"
+            )
+
+    if args.save_checkpoint is not None:
+        if args.prefetch_weights:
+            parser.error(
+                "--save-checkpoint と --prefetch-weights は同時に指定できません"
+            )
+        if args.manifest_only:
+            parser.error(
+                "--save-checkpoint と --manifest-only は同時に指定できません"
+            )
 
     for key in ("image_size", "train_batch_size", "eval_batch_size"):
         if getattr(args, key) < 1:
@@ -662,10 +715,226 @@ def _relative_repo_path(path: Path) -> str:
         return relative
 
 
+def _module_version(name: str) -> str | None:
+    """モジュールの ``__version__`` を返す。取得できなければ ``None``。"""
+    try:
+        module = importlib.import_module(name)
+    except Exception:
+        return None
+    version = getattr(module, "__version__", None)
+    return str(version) if version else None
+
+
+def _observe_model_device(model: Any) -> str:
+    """モデルパラメータの実デバイス種別を返す。
+
+    パラメータを持たないモデルでは ``"unknown"`` を返す。
+    """
+    try:
+        parameters = getattr(model, "parameters", None)
+        if not callable(parameters):
+            return "unknown"
+        first = next(parameters(), None)
+    except Exception:
+        return "unknown"
+    if first is None:
+        return "unknown"
+    device_type = getattr(getattr(first, "device", None), "type", None)
+    return str(device_type) if device_type else "unknown"
+
+
+def _cuda_device_name() -> str | None:
+    """CUDA が利用可能な場合に 0 番デバイスの名前を返す。"""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        return str(torch.cuda.get_device_name(0))
+    except Exception:
+        return None
+
+
+def _check_observed_device(
+    requested: str, observed: str | None
+) -> tuple[list[str], list[str]]:
+    """観測デバイスを確認し、``(不一致の警告, その他の警告)`` を返す。
+
+    不一致の警告がある場合、呼び出し側は report 保存後に終了コード 3 で
+    終了する（``--allow-device-mismatch`` 指定時は警告のみ）。
+    """
+    if observed is None or observed == "" or observed == "unknown":
+        return [], [
+            "モデルのパラメータからデバイスを観測できませんでした"
+            f"（要求: {requested}）。"
+        ]
+    try:
+        mismatch = detect_device_mismatch(requested, [observed])
+    except ValueError as error:
+        return [], [f"観測デバイスを判定できませんでした: {error}"]
+    return mismatch, []
+
+
+def _ensure_devices_report(report: dict[str, Any], requested: str) -> dict[str, Any]:
+    """report の ``devices`` セクションを用意して返す。"""
+    devices = report.get("devices")
+    if not isinstance(devices, dict):
+        devices = {}
+        report["devices"] = devices
+    devices.setdefault("train", None)
+    infer = devices.get("infer")
+    if not isinstance(infer, dict):
+        devices["infer"] = {"requested": requested, "observed": None}
+    warnings = devices.get("warnings")
+    if not isinstance(warnings, list):
+        devices["warnings"] = []
+    return devices
+
+
+def _best_checkpoint_path(trainer: Any) -> str | None:
+    """Lightning trainer が保持する best チェックポイントのパスを返す。"""
+    if trainer is None:
+        return None
+    callback = getattr(trainer, "checkpoint_callback", None)
+    if callback is None:
+        return None
+    best = getattr(callback, "best_model_path", None)
+    if isinstance(best, str) and best:
+        return best
+    return None
+
+
+def _save_checkpoint(
+    engine: Any,
+    args: argparse.Namespace,
+    output: Path,
+    report: dict[str, Any],
+    devices_report: Mapping[str, Any],
+) -> None:
+    """学習後のチェックポイントと来歴サイドカーを保存し、report に記録する。
+
+    best チェックポイントがあれば ``DIR/model.ckpt`` へ複製し、無ければ
+    ``trainer.save_checkpoint`` で保存する。重みはコミットしない前提で、
+    ``DIR`` はリポジトリ外を推奨する（help に明記）。
+    """
+    target_dir = Path(args.save_checkpoint)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "model.ckpt"
+
+    trainer = getattr(engine, "trainer", None)
+    source = _best_checkpoint_path(trainer)
+    saved = False
+    if source is not None:
+        source_path = Path(source)
+        if source_path.is_file():
+            try:
+                same = source_path.resolve() == target.resolve()
+            except OSError:
+                same = False
+            if same:
+                saved = True
+            else:
+                shutil.copyfile(source_path, target)
+                saved = True
+    if not saved:
+        if trainer is None or not callable(
+            getattr(trainer, "save_checkpoint", None)
+        ):
+            raise RuntimeError(
+                "--save-checkpoint を使うには Lightning の trainer が必要です。"
+                "engine の初期化を確認してください。"
+            )
+        trainer.save_checkpoint(str(target))
+
+    checkpoint_sha256 = _sha256_file(target)
+
+    train_info = devices_report.get("train")
+    train_info = train_info if isinstance(train_info, Mapping) else {}
+    observed_train = train_info.get("observed")
+    observed_train_device = (
+        observed_train
+        if isinstance(observed_train, str) and observed_train != "unknown"
+        else None
+    )
+    train_device = observed_train_device or str(args.device)
+    cuda_device_name = train_info.get("cuda_device_name")
+
+    protocol_report = report.get("protocol")
+    protocol_report = (
+        protocol_report if isinstance(protocol_report, Mapping) else {}
+    )
+    protocol_name = protocol_report.get("name")
+    protocol_sha256 = protocol_report.get("sha256")
+
+    provenance = build_provenance(
+        checkpoint_sha256=checkpoint_sha256,
+        train_device=train_device,
+        observed_train_device=observed_train_device,
+        cuda_device_name=(
+            cuda_device_name if isinstance(cuda_device_name, str) else None
+        ),
+        torch_version=_module_version("torch"),
+        anomalib_version=_module_version("anomalib"),
+        model=str(args.model),
+        category=str(args.category),
+        protocol_name=protocol_name if isinstance(protocol_name, str) else None,
+        protocol_sha256=(
+            protocol_sha256 if isinstance(protocol_sha256, str) else None
+        ),
+        run_id=str(report.get("run_id") or output.name),
+    )
+    sidecar = provenance_path_for(target)
+    write_provenance(sidecar, provenance)
+
+    report["saved_checkpoint"] = {
+        "path": _relative_repo_path(target),
+        "sha256": checkpoint_sha256,
+        "provenance_path": _relative_repo_path(sidecar),
+    }
+
+
+def _load_checkpoint_provenance(
+    checkpoint: Path,
+    checkpoint_sha256: str,
+) -> tuple[dict[str, Any] | None, list[str], str | None]:
+    """チェックポイントの来歴サイドカーを読み、sha256 を照合する。
+
+    Returns:
+        ``(来歴データまたは None, 警告文のリスト, 信頼できる学習デバイスまたは None)``。
+        サイドカーが無ければ ``(None, [], None)``。sha256 が一致しない場合は
+        来歴データは返すが、学習デバイスは信頼せず ``None`` にする。
+    """
+    sidecar = provenance_path_for(checkpoint)
+    try:
+        provenance = read_provenance(sidecar)
+    except ValueError as error:
+        return (
+            None,
+            [f"来歴サイドカーを読めません（{sidecar.name}）: {error}"],
+            None,
+        )
+    if provenance is None:
+        return None, [], None
+    if not provenance_matches(provenance, checkpoint_sha256):
+        return (
+            provenance,
+            [
+                "来歴サイドカーの checkpoint_sha256 が実ファイルと一致しません。"
+                "学習デバイスの来歴を信頼せず、"
+                "external_checkpoint_unknown_train_device として扱います。"
+            ],
+            None,
+        )
+    train_device = provenance.get("train_device")
+    return (
+        provenance,
+        [],
+        train_device if isinstance(train_device, str) else None,
+    )
+
+
 def _get_pretrained_weights_dir() -> Path | None:
     """Anomalib の教師重みキャッシュディレクトリを取得する。"""
-    import importlib
-
     candidates = (
         "anomalib.models.image.efficient_ad.lightning_model",
         "anomalib.models.image.efficient_ad.utils",
@@ -813,6 +1082,10 @@ def _run_stages(
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDAを利用できません。--device cpu を指定してください。")
 
+    devices_report = _ensure_devices_report(report, args.device)
+    device_warnings: list[str] = devices_report["warnings"]
+    mismatch_warnings: list[str] = []
+
     seed_everything(args.seed, workers=True)
     torch.manual_seed(args.seed)
     randomness = report.setdefault("randomness", {})
@@ -835,9 +1108,38 @@ def _run_stages(
         return
 
     checkpoint_mode = args.checkpoint is not None
+    provenance_train_device: str | None = None
 
     if checkpoint_mode:
         model = _load_checkpoint_model(args)
+        checkpoint_sha256 = report.get("checkpoint_sha256")
+        if not isinstance(checkpoint_sha256, str) or not checkpoint_sha256:
+            checkpoint_sha256 = _sha256_file(Path(args.checkpoint))
+            report["checkpoint_sha256"] = checkpoint_sha256
+        (
+            provenance,
+            provenance_warnings,
+            provenance_train_device,
+        ) = _load_checkpoint_provenance(
+            Path(args.checkpoint), checkpoint_sha256
+        )
+        device_warnings.extend(provenance_warnings)
+        report["checkpoint_provenance"] = (
+            None
+            if provenance is None
+            else {
+                "path": provenance_path_for(Path(args.checkpoint)).name,
+                "sha256_matches": provenance_matches(
+                    provenance, checkpoint_sha256
+                ),
+                "data": provenance,
+            }
+        )
+        # 来歴で GPU 学習が証明された場合だけ training_mode を切り替える。
+        report["training_mode"] = determine_training_mode(
+            args.checkpoint,
+            provenance_train_device=provenance_train_device,
+        )
     else:
         model = _create_model(args)
 
@@ -885,7 +1187,7 @@ def _run_stages(
             "チェックポイントに保存された PostProcessor 統計を使用します。"
         )
         report["checkpoint_inference"] = {
-            "checkpoint_sha256": _sha256_file(Path(args.checkpoint)),
+            "checkpoint_sha256": report.get("checkpoint_sha256"),
             "validation_called": False,
             "uses_statistics_from_checkpoint": True,
             "note": (
@@ -907,6 +1209,21 @@ def _run_stages(
             engine.fit(model=model, datamodule=datamodule)
             fit_seconds = time.perf_counter() - fit_start
         memory["train_peak_rss_mib_sampled"] = fit_memory["peak_rss_mib"]
+
+        # 学習直後の実デバイスを観測する（意図しないフォールバック検知）。
+        observed_train = _observe_model_device(model)
+        devices_report["train"] = {
+            "requested": args.device,
+            "observed": observed_train,
+            "cuda_available": bool(torch.cuda.is_available()),
+            "cuda_device_name": (
+                _cuda_device_name() if args.device == "cuda" else None
+            ),
+        }
+        mismatch, other = _check_observed_device(args.device, observed_train)
+        mismatch_warnings.extend(mismatch)
+        device_warnings.extend(mismatch)
+        device_warnings.extend(other)
 
         trainer = getattr(engine, "trainer", None)
         if trainer is not None:
@@ -938,6 +1255,47 @@ def _run_stages(
             )
 
         _record_manifest(report, datamodule, root, output, args)
+
+        if args.save_checkpoint is not None:
+            # PostProcessor 統計が確定した後（validate 後）に保存する。
+            _save_checkpoint(engine, args, output, report, devices_report)
+
+    if checkpoint_mode and args.device != "cpu":
+        # チェックポイントは CPU に読み込まれるため、推論デバイスへ明示的に移す。
+        model = model.to(args.device)
+
+    # 推論（engine.test）直前の実デバイスを観測する。
+    observed_infer = _observe_model_device(model)
+    devices_report["infer"] = {
+        "requested": args.device,
+        "observed": observed_infer,
+    }
+    mismatch, other = _check_observed_device(args.device, observed_infer)
+    mismatch_warnings.extend(mismatch)
+    device_warnings.extend(mismatch)
+    device_warnings.extend(other)
+
+    if checkpoint_mode:
+        train_device_for_mode = provenance_train_device
+    else:
+        train_info = devices_report.get("train")
+        train_observed = (
+            train_info.get("observed")
+            if isinstance(train_info, Mapping)
+            else None
+        )
+        train_device_for_mode = effective_device(args.device, train_observed)
+    infer_device_for_mode = effective_device(args.device, observed_infer)
+    try:
+        report["execution_mode"] = classify_execution_mode(
+            train_device_for_mode, infer_device_for_mode
+        )
+    except ValueError as error:
+        # 来歴が手編集などで壊れていても実行は継続し、保守的に不明として扱う。
+        report["execution_mode"] = (
+            EXECUTION_MODE_EXTERNAL_CHECKPOINT_UNKNOWN_TRAIN_DEVICE
+        )
+        device_warnings.append(f"実行モードを判定できませんでした: {error}")
 
     with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as test_memory:
         test_start = time.perf_counter()
@@ -1006,6 +1364,11 @@ def _run_stages(
             "latency_peak_rss_mib_sampled"
         ]
 
+    report["device_mismatch"] = {
+        "detected": bool(mismatch_warnings),
+        "warnings": list(mismatch_warnings),
+        "allowed": bool(args.allow_device_mismatch),
+    }
     report["status"] = "ok"
 
 
@@ -1041,6 +1404,27 @@ def main(argv: list[str] | None = None) -> int:
 
     write_report(report_path, report)
     print(f"結果を保存しました: {report_path}")
+
+    devices = report.get("devices")
+    if isinstance(devices, Mapping):
+        warnings = devices.get("warnings")
+        if isinstance(warnings, list):
+            for warning in warnings:
+                print(f"警告: {warning}", file=sys.stderr)
+
+    mismatch = report.get("device_mismatch")
+    if (
+        isinstance(mismatch, Mapping)
+        and mismatch.get("detected")
+        and not args.allow_device_mismatch
+    ):
+        print(
+            "要求デバイスと観測デバイスが一致しません。意図しないフォールバックの"
+            "可能性があるため終了コード 3 で終了します。警告のみで続行する場合は "
+            "--allow-device-mismatch を指定してください。",
+            file=sys.stderr,
+        )
+        return 3
     return 0
 
 

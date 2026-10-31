@@ -1,7 +1,7 @@
 """実験結果の集計。
 
 `runs.jsonl` の 1 行と report.json から runs テーブルを作り、
-(model, category, image_size, cpu_threads) ごとの summary を作る。
+(model, category, image_size, cpu_threads, execution_mode) ごとの summary を作る。
 標準ライブラリのみを使い、欠損値を 0 や NaN で埋めない。
 """
 
@@ -15,12 +15,15 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from adbench.devices import EXECUTION_MODES, execution_mode_of_report
+
 RUN_COLUMNS = [
     "run_key",
     "model",
     "category",
     "image_size",
     "cpu_threads",
+    "execution_mode",
     "repeat",
     "status",
     "image_AUROC",
@@ -65,6 +68,7 @@ SUMMARY_COLUMNS = [
     "category",
     "image_size",
     "cpu_threads",
+    "execution_mode",
     "n_runs",
     "n_ok",
     "n_failed",
@@ -156,7 +160,11 @@ def build_runs_table(
     entries: Iterable[Mapping[str, Any]],
     report_loader: Callable[[str | None], Mapping[str, Any] | None],
 ) -> list[dict[str, Any]]:
-    """runs.jsonl 相当の entries と report loader から runs テーブルを作る。"""
+    """runs.jsonl 相当の entries と report loader から runs テーブルを作る。
+
+    ``execution_mode`` は report から決める。report が読めない場合は
+    値を捏造せず ``None`` のままにする。
+    """
 
     rows: list[dict[str, Any]] = []
     for entry in entries:
@@ -192,6 +200,11 @@ def build_runs_table(
             status = "failed"
         row["status"] = str(status)
 
+        if isinstance(report, Mapping):
+            row["execution_mode"] = execution_mode_of_report(report)
+        else:
+            row["execution_mode"] = None
+
         row.update(metrics)
 
         error = entry.get("error")
@@ -206,26 +219,38 @@ def build_runs_table(
 
 
 def summarize_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """runs テーブルから summary 行を作る。平均等は ok の実行だけから計算する。"""
+    """runs テーブルから summary 行を作る。
 
-    groups: dict[tuple[Any, Any, Any, Any], list[Mapping[str, Any]]] = {}
+    平均等は ok の実行だけから計算する。実行モードが異なる行は
+    別グループとして集計する（CPU のみの結果と GPU 実行の結果を混ぜない）。
+    """
+
+    groups: dict[tuple[Any, Any, Any, Any, Any], list[Mapping[str, Any]]] = {}
     for row in rows:
         key = (
             row.get("model"),
             row.get("category"),
             row.get("image_size"),
             row.get("cpu_threads"),
+            row.get("execution_mode"),
         )
         groups.setdefault(key, []).append(row)
 
     summary: list[dict[str, Any]] = []
-    for (model, category, image_size, cpu_threads), group in groups.items():
+    for (
+        model,
+        category,
+        image_size,
+        cpu_threads,
+        execution_mode,
+    ), group in groups.items():
         ok_rows = [row for row in group if row.get("status") == "ok"]
         item: dict[str, Any] = {
             "model": model,
             "category": category,
             "image_size": image_size,
             "cpu_threads": cpu_threads,
+            "execution_mode": execution_mode,
             "n_runs": len(group),
             "n_ok": len(ok_rows),
             "n_failed": len(group) - len(ok_rows),
@@ -380,6 +405,11 @@ def render_report_md(
 
     lines.append("## 2. カテゴリ別比較")
     lines.append("")
+    lines.append(
+        "実行モードが異なる行は同一表で比較しない。"
+        "`cpu_only` 以外の結果は CPU のみの実用性の数値と混同しない。"
+    )
+    lines.append("")
 
     raw_categories: list[Any] = []
     raw_models: list[Any] = []
@@ -403,87 +433,88 @@ def render_report_md(
         value for value in _ordered_unique(raw_models) if isinstance(value, str)
     ]
 
-    config_image_sizes = _int_list_or_empty(config.get("image_sizes"))
-    config_cpu_threads = _int_list_or_empty(config.get("cpu_threads"))
-
-    condition_set: set[tuple[str, int, int]] = set()
-    if config_image_sizes and config_cpu_threads:
-        for category in categories:
-            for image_size in config_image_sizes:
-                for cpu_threads in config_cpu_threads:
-                    condition_set.add((category, image_size, cpu_threads))
-    for summary_row in summary_rows:
-        category = summary_row.get("category")
-        image_size = _norm_int(summary_row.get("image_size"))
-        cpu_threads = _norm_int(summary_row.get("cpu_threads"))
-        if (
-            isinstance(category, str)
-            and image_size >= 0
-            and cpu_threads >= 0
-        ):
-            condition_set.add((category, image_size, cpu_threads))
-
-    summary_map: dict[tuple[str, str, int, int], Mapping[str, Any]] = {}
+    summary_map: dict[tuple[str, str, int, int, str], Mapping[str, Any]] = {}
     for summary_row in summary_rows:
         model = summary_row.get("model")
         category = summary_row.get("category")
         image_size = _norm_int(summary_row.get("image_size"))
         cpu_threads = _norm_int(summary_row.get("cpu_threads"))
+        mode = _execution_mode_label(summary_row.get("execution_mode"))
         if isinstance(model, str) and isinstance(category, str):
-            summary_map[(model, category, image_size, cpu_threads)] = summary_row
+            summary_map[(model, category, image_size, cpu_threads, mode)] = (
+                summary_row
+            )
 
     wrote_comparison_table = False
     for category in categories:
-        conditions = sorted(
-            {
-                (image_size, cpu_threads)
-                for cat, image_size, cpu_threads in condition_set
-                if cat == category
-                and any(
-                    (model, category, image_size, cpu_threads) in summary_map
-                    for model in models
-                )
-            }
+        modes = _ordered_unique(
+            _execution_mode_label(row.get("execution_mode"))
+            for row in summary_rows
+            if row.get("category") == category
         )
-        if not conditions:
-            continue
+        modes.sort(key=_execution_mode_sort_key)
 
-        wrote_comparison_table = True
-        lines.append(f"### {_md_cell(category)}")
-        lines.append("")
-        lines.append(
-            "| 条件 | モデル | n_ok/n_runs | Image AUROC engine | "
-            "Image AUROC raw | Pixel AUROC engine | Pixel AUROC raw | "
-            "学習時間 s | e2e P50 ms | e2e P95 ms | ピーク RSS MiB |"
-        )
-        lines.append(
-            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
-        )
-        for image_size, cpu_threads in conditions:
-            for model in models:
-                summary_row = summary_map.get(
-                    (model, category, image_size, cpu_threads)
-                )
-                if summary_row is None:
-                    # 実行記録が無い組合せは表に出さない（0/0 行は情報を持たない）。
-                    continue
-                n_runs = summary_row.get("n_runs") if summary_row else 0
-                n_ok = summary_row.get("n_ok") if summary_row else 0
-                cells = [
-                    f"s{image_size} / t{cpu_threads}",
-                    model,
-                    f"{n_ok}/{n_runs}",
-                    _mean_std_cell(summary_row, "image_AUROC"),
-                    _mean_std_cell(summary_row, "image_AUROC_raw"),
-                    _mean_std_cell(summary_row, "pixel_AUROC"),
-                    _mean_std_cell(summary_row, "pixel_AUROC_raw"),
-                    _mean_std_cell(summary_row, "train_stage_seconds"),
-                    _mean_std_cell(summary_row, "e2e_p50_ms"),
-                    _mean_std_cell(summary_row, "e2e_p95_ms"),
-                    _mean_std_cell(summary_row, "process_peak_rss_mib"),
-                ]
-                lines.append("| " + " | ".join(_md_cell(cell) for cell in cells) + " |")
-        lines.append("")
+        wrote_category_header = False
+        for mode in modes:
+            conditions = sorted(
+                {
+                    (image_size, cpu_threads)
+                    for (
+                        _model_name,
+                        cat,
+                        image_size,
+                        cpu_threads,
+                        row_mode,
+                    ) in summary_map
+                    if cat == category and row_mode == mode
+                }
+            )
+            if not conditions:
+                continue
+
+            wrote_comparison_table = True
+            if not wrote_category_header:
+                lines.append(f"### {_md_cell(category)}")
+                lines.append("")
+                wrote_category_header = True
+
+            lines.append(f"#### 実行モード: {_md_cell(mode)}")
+            lines.append("")
+            lines.append(
+                "| 条件 | モデル | n_ok/n_runs | Image AUROC engine | "
+                "Image AUROC raw | Pixel AUROC engine | Pixel AUROC raw | "
+                "学習時間 s | e2e P50 ms | e2e P95 ms | ピーク RSS MiB |"
+            )
+            lines.append(
+                "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+            )
+            for image_size, cpu_threads in conditions:
+                for model in models:
+                    summary_row = summary_map.get(
+                        (model, category, image_size, cpu_threads, mode)
+                    )
+                    if summary_row is None:
+                        # 実行記録が無い組合せは表に出さない（0/0 行は情報を持たない）。
+                        continue
+                    n_runs = summary_row.get("n_runs")
+                    n_ok = summary_row.get("n_ok")
+                    cells = [
+                        f"s{image_size} / t{cpu_threads}",
+                        model,
+                        f"{n_ok}/{n_runs}",
+                        _mean_std_cell(summary_row, "image_AUROC"),
+                        _mean_std_cell(summary_row, "image_AUROC_raw"),
+                        _mean_std_cell(summary_row, "pixel_AUROC"),
+                        _mean_std_cell(summary_row, "pixel_AUROC_raw"),
+                        _mean_std_cell(summary_row, "train_stage_seconds"),
+                        _mean_std_cell(summary_row, "e2e_p50_ms"),
+                        _mean_std_cell(summary_row, "e2e_p95_ms"),
+                        _mean_std_cell(summary_row, "process_peak_rss_mib"),
+                    ]
+                    lines.append(
+                        "| " + " | ".join(_md_cell(cell) for cell in cells) + " |"
+                    )
+            lines.append("")
 
     if not wrote_comparison_table:
         lines.append("比較可能な実行がありません。")
@@ -588,7 +619,25 @@ def _summary_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
         str(row.get("category") or ""),
         _norm_int(row.get("image_size")),
         _norm_int(row.get("cpu_threads")),
+        _execution_mode_sort_key(
+            _execution_mode_label(row.get("execution_mode"))
+        ),
     )
+
+
+def _execution_mode_label(value: Any) -> str:
+    """summary/report の execution_mode を表示用ラベルにする。"""
+    if isinstance(value, str) and value:
+        return value
+    return "unknown"
+
+
+def _execution_mode_sort_key(mode: str) -> tuple[int, str]:
+    """実行モードの表示順。定義順を優先し、未知の値は末尾へ回す。"""
+    try:
+        return (EXECUTION_MODES.index(mode), "")
+    except ValueError:
+        return (len(EXECUTION_MODES), mode)
 
 
 def _norm_int(value: Any) -> int:
@@ -663,14 +712,4 @@ def _ordered_unique(values: Iterable[Any]) -> list[Any]:
             continue
         seen.add(value)
         result.append(value)
-    return result
-
-
-def _int_list_or_empty(value: Any) -> list[int]:
-    if not isinstance(value, list):
-        return []
-    result: list[int] = []
-    for item in value:
-        if isinstance(item, int) and not isinstance(item, bool):
-            result.append(item)
     return result
