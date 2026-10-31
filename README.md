@@ -57,15 +57,20 @@ python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model patc
 - **実験条件**：OS、Anomalib/PyTorchバージョン、入力サイズ、モデル、データ分割、seed、バッチサイズ、CPUスレッド数、引数
 - **処理方式**：現時点は `whole_image_resized_not_tiled`（全体を入力サイズに縮小、タイル処理なし）
 
-## 次に実装するもの
+## 開発ロードマップ
 
-1. 推論レイテンシ（ウォームアップ後のP50/P95、前処理を含む/含まない）
-2. PyTorch CPU / ONNX Runtime CPU / OpenVINO CPU の同条件比較
-3. EfficientAD（教師重み・ImageNette・学習ステップ数を明示して導入）
-4. 4K向けタイル分割と、256/512/1024pxに縮小する方式の比較
-5. 欠陥サイズ別検出率、見逃し率、過検出率、利用許可済みの実撮影画像による評価
+進捗は [ロードマップ親Issue #4](https://github.com/ada-koki/anomaly-detection-playground/issues/4) を起点に管理します。以下は実装順の目安であり、固定日程ではありません。
 
-詳細は [評価プロトコル](docs/benchmark_protocol.md) を参照してください。`python -m unittest discover -s tests -v` で依存関係なしの基本テストが実行できます。
+| Phase | 目的 | 実装Issue |
+| --- | --- | --- |
+| **1. ベースライン確立** | CPU実動作確認・画像単位の計測・再現性・CI | [#5](https://github.com/ada-koki/anomaly-detection-playground/issues/5) / [#6](https://github.com/ada-koki/anomaly-detection-playground/issues/6) / [#7](https://github.com/ada-koki/anomaly-detection-playground/issues/7) / [#8](https://github.com/ada-koki/anomaly-detection-playground/issues/8) |
+| **2. アルゴリズム比較** | 共通条件の比較・EfficientAD・CPU推論モード | [#9](https://github.com/ada-koki/anomaly-detection-playground/issues/9) / [#10](https://github.com/ada-koki/anomaly-detection-playground/issues/10) / [#11](https://github.com/ada-koki/anomaly-detection-playground/issues/11) |
+| **3. 高解像度・微小欠陥** | MVTec-4Kの検証・タイル分割・欠陥サイズ別評価 | [#12](https://github.com/ada-koki/anomaly-detection-playground/issues/12) / [#13](https://github.com/ada-koki/anomaly-detection-playground/issues/13) / [#14](https://github.com/ada-koki/anomaly-detection-playground/issues/14) |
+| **4. 高速化・評価拡張** | ONNX Runtime / OpenVINO・MVTec AD 2 / VisA | [#15](https://github.com/ada-koki/anomaly-detection-playground/issues/15) / [#16](https://github.com/ada-koki/anomaly-detection-playground/issues/16) |
+
+**最初に取り組むIssueは [#5](https://github.com/ada-koki/anomaly-detection-playground/issues/5)** です。実データでのAnomalibの学習・評価が完走した後に、他手法や高解像度の比較へ進みます。
+
+評価指標・注意点は [評価プロトコル](docs/benchmark_protocol.md) を参照してください。`python -m unittest discover -s tests -v` で依存関係なしの基本テストが実行できます。
 
 ## 公開方針
 
