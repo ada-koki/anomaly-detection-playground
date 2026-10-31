@@ -1,1 +1,74 @@
 # anomaly-detection-playground
+
+産業用の**画像異常検知 (Visual Anomaly Detection)** を、精度・学習時間・推論速度・メモリ効率の観点で比較する実験リポジトリです。特に**CPUだけで学習・推論できるか**と、**高解像度画像上の微小欠陥**を重視します。
+
+> [!IMPORTANT]
+> **初期ベースラインです。** Anomalib 2.7.0 の PaDiM / PatchCore を呼び出し、CPUの学習・テスト工程の時間・ピークRSSと精度指標をJSONに保存します。EfficientAD、画像1枚ごとの推論P50/P95、タイル分割、ONNX Runtime / OpenVINO比較は今後追加します。実画像での動作と計測値はまだ未検証です。
+
+## 評価データセット
+
+| データセット | 目的 | 状態 |
+| --- | --- | --- |
+| [MVTec AD](https://www.mvtec.com/company/research/datasets/mvtec-ad) | 標準的な手法比較 | ベースライン実行対象 |
+| [MVTec-4K](https://huggingface.co/datasets/XimiaoZhang/MVTec-4K) | 高解像度、微小異常、縮小耐性 | ベースライン実行対象 |
+| [MVTec AD 2](https://www.mvtec.com/company/research/datasets/mvtec-ad-2) | 難条件での頑健性 | 今後追加 |
+| [VisA](https://amazon-visual-anomaly.s3.us-west-2.amazonaws.com/README.html) | 異なる画像分布での汎化性能 | 今後追加 |
+| 実撮影データ (5MP/12MP) | 実用条件での精度と性能 | 今後追加（非公開） |
+
+MVTec-4K は [HiAD](https://github.com/cnulab/HiAD) による高解像度派生データセットで、実際の4Kセンサー画像だけからなるデータセットではありません。**4Kの画像を256pxに縮小して得た結果は、4K入力での異常検知性能ではありません。** 処理前とモデル入力時の解像度、および縮小/タイル方式を必ず明記します。
+
+## クイックスタート：CPUのみ
+
+Python 3.11～3.13を想定しています（Windows/Linuxを想定、実機での依存関係の動作検証は未実施）。PyTorch・事前学習済み重み・データセットの初回取得には通信が必要です。
+
+```bash
+python -m venv .venv
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+# Linux/macOS: source .venv/bin/activate
+python -m pip install -e .
+```
+
+MVTec ADは先にダウンロードします。Anomalibのデータセット取得機能を使う例：
+
+```bash
+python -c "from anomalib.data import MVTecAD; MVTecAD(root='datasets/MVTecAD', category='bottle').prepare_data()"
+python scripts/run_anomalib.py --dataset mvtec_ad --category bottle --model padim --device cpu --image-size 256
+python scripts/run_anomalib.py --dataset mvtec_ad --category bottle --model patchcore --device cpu --image-size 256
+```
+
+MVTec-4Kは[配布ページ](https://huggingface.co/datasets/XimiaoZhang/MVTec-4K/tree/main)から入手し、`datasets/MVTec-4K/<category>/train/good/`、`test/good/` 等を含む構成で配置してください。全体で約45.7GBあります。
+
+```bash
+# 4K画像を256pxに縮小した比較（「高解像度推論」ではない）
+python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model padim --device cpu --image-size 256
+# 入力解像度を増やした試験（CPUメモリ不足に注意）
+python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model patchcore --device cpu --image-size 512
+```
+
+`--device cpu` を明示すると学習・評価の両方でCPUを使います。参考として `--device cuda` でも実行できます。`--cpu-threads 8`、`--num-workers 0`、`--train-batch-size 1`、`--eval-batch-size 1` 等で条件を固定できます。
+
+## 現状の出力
+
+`results/<run-id>/report.json` に次の値を記録します。
+
+- **精度**：Anomalib の `engine.test` が返したメトリクス（提供された指標のみ）
+- **学習時間・テスト時間**：`train_stage_seconds` / `test_stage_seconds`。データ読み込み・検証を含む**工程全体**の時間であり、画像1枚の推論レイテンシではありません
+- **ホストメモリ**：親プロセスと子プロセスのRSSの、約100ms間隔でのサンプリング最大値（短いピークは取り逃す可能性あり）
+- **実験条件**：OS、Anomalib/PyTorchバージョン、入力サイズ、モデル、データ分割、seed、バッチサイズ、CPUスレッド数、引数
+- **処理方式**：現時点は `whole_image_resized_not_tiled`（全体を入力サイズに縮小、タイル処理なし）
+
+## 次に実装するもの
+
+1. 推論レイテンシ（ウォームアップ後のP50/P95、前処理を含む/含まない）
+2. PyTorch CPU / ONNX Runtime CPU / OpenVINO CPU の同条件比較
+3. EfficientAD（教師重み・ImageNette・学習ステップ数を明示して導入）
+4. 4K向けタイル分割と、256/512/1024pxに縮小する方式の比較
+5. 欠陥サイズ別検出率、見逃し率、過検出率、5MP/12MPの実画像評価
+
+詳細は [評価プロトコル](docs/benchmark_protocol.md) を参照してください。`python -m unittest discover -s tests -v` で依存関係なしの基本テストが実行できます。
+
+## ライセンス
+
+このリポジトリのコードは [MIT](LICENSE) です。画像データおよび事前学習済み重みのライセンスは別です。MVTec AD は非商用の CC BY-NC-SA 4.0。MVTec-4K 配布ページには Apache-2.0 表記がありますが、派生元の権利・利用条件も確認してください。データと重みはGit管理しません。
+
+参考：[Anomalib](https://github.com/open-edge-platform/anomalib) / [Anomalib docs](https://anomalib.readthedocs.io/en/latest/) / [HiAD](https://github.com/cnulab/HiAD)
