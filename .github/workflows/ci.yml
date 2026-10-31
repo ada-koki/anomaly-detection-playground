@@ -1,0 +1,47 @@
+name: CI
+
+# 公開リポジトリ向けのスモークテスト。
+# 外部データセット・学習済み重みは取得せず、依存パッケージもインストールしない。
+# そのため MVTec AD などのライセンス条件に触れずに、どのブランチでも同じ結果になる。
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: smoke (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.13"
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 構文検査（compileall）
+        run: python -m compileall -q adbench scripts tests
+
+      - name: ユニットテスト（重い依存なし・未導入分は skip）
+        run: python -m unittest discover -s tests -v
+
+      - name: CLI の --help スモークテスト
+        run: python scripts/run_anomalib.py --help
+
+      - name: リポジトリ安全性チェック（追跡ファイル全体）
+        run: python scripts/check_repo_safety.py

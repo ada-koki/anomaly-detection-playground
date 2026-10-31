@@ -96,8 +96,9 @@ class BinaryAurocTest(unittest.TestCase):
 
 
 class PixelAurocTest(unittest.TestCase):
+    @unittest.skipUnless(_HAS_NUMPY, "numpy が必要です")
     def test_all_zero_mask_returns_none(self) -> None:
-        # 画素が空の場合も異常画素ゼロの場合も None（numpy 不要の分岐）。
+        # 画素が空の場合は None。
         self.assertIsNone(pixel_auroc_from_arrays([], []))
 
     @unittest.skipUnless(_HAS_NUMPY and _HAS_SKLEARN, "numpy と scikit-learn が必要です")
