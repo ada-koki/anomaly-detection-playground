@@ -41,7 +41,7 @@
 
 - 精度指標（AUROC）は 2 反復で完全に一致しました（標準偏差 0）。データ分割・seed の固定（#7）が効いています。
 - 時間指標は反復間のばらつきが大きく、特に PatchCore の学習時間（grid: 697 s と 1492 s、metal_nut: 441 s と 998 s）と、e2e P95 が大きくぶれています。P50 は比較的安定しています。
-- PatchCore はこの CPU 環境で学習時間が PaDiM の数十倍、e2e P50 が約 2〜4 倍、ピーク RSS が約 1.8〜2.3 倍（toothbrush は同程度）でした。精度は 4 カテゴリすべてで PatchCore が上回りました。
+- PatchCore はこの CPU 環境で学習時間が PaDiM の約 17〜74 倍（toothbrush は約 3 倍）、e2e P50 が約 2〜4 倍、ピーク RSS が約 1.8〜2.3 倍（toothbrush は同程度）でした。精度は 4 カテゴリすべてで PatchCore が上回りました。
 - PaDiM の 256px と 320px の比較では、Pixel AUROC はわずかに上がる一方 Image AUROC は下がり、学習時間・レイテンシ・RSS は増えました。
 
 ## 計測上の注意（未統制の要因）
