@@ -90,6 +90,7 @@ VisA には非公開 test は無く、`1cls.csv` の train/test 定義をその�
 - プロトコル共通条件: batch 1、num_workers 0、実行時 `--cpu-threads 8`、画像 256x256（CSV の `threads` 列は全行 8、`image_size` は全行 256x256）。
 - 1 カテゴリずつ逐次実行（VisA candle、MVTec AD 2 vial）。
 - **干渉**: 同一ホストで本計測と無関係の別プロセス（nice 19、2 スレッド）が断続的に動作していた。`phase=accuracy` の run はその終了を待たずに実行し、実行中に別プロセスが存在したかを 2 秒間隔で監視して `other_process_interference` に記録した。AUROC は計算内容が CPU 負荷に依存しないため採用するが、**学習・テスト秒とレイテンシは干渉ありの値として参考扱い**とする。
+- **干渉なし再計測**: 別プロセスが 30 秒連続で不在になってから開始し、実行中は 1 秒間隔で監視した（`phase=latency_remeasure_tryN`）。4 条件とも try1 で `other_process_interference=no` のまま完走した（2026-11-01 02:26〜03:00 JST）。VisA candle PatchCore は OOM のため対象外。
 
 ## 7. 結果
 
@@ -105,7 +106,7 @@ VisA には非公開 test は無く、`1cls.csv` の train/test 定義をその�
 | ad2_vial_patchcore_256 | accuracy | yes | 112 | 0.857993 | 0.857993 | 0.94292 | 0.942598 |
 | mvtecad_bottle_padim_256 | accuracy | yes | 67 | 0.996324 | 0.996324 | 0.97676 | 0.976871 |
 
-### 表 2: 時間・レイテンシ・メモリ（すべて干渉あり・参考値）
+### 表 2: 時間・レイテンシ・メモリ（`phase=accuracy`、干渉あり・参考値）
 
 | 条件 | 学習 s | テスト s | model P50 ms | model P95 ms | e2e P50 ms | e2e P95 ms | 学習ピーク RSS MiB | テストピーク RSS MiB | レイテンシピーク RSS MiB |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -118,7 +119,19 @@ VisA には非公開 test は無く、`1cls.csv` の train/test 定義をその�
 - AD2 vial PatchCore の `train_stage_s` 1895.38 s には coreset 選択（29,797 点）の時間を含む。
 - VisA candle PatchCore の行（accuracy / accuracy_retry1 / accuracy_mitigation）は全フィールド空（いずれも OOM Kill）。
 
-### 表 3: run_id（追跡用）
+### 表 2b: 時間・レイテンシ・メモリ（`phase=latency_remeasure_try1`、干渉なし・採用値）
+
+| 条件 | 学習 s | テスト s | model P50 ms | model P95 ms | e2e P50 ms | e2e P95 ms | 学習ピーク RSS MiB | テストピーク RSS MiB | レイテンシピーク RSS MiB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| visa_candle_padim_256 | 34.13 | 10.36 | 68.1 | 203.7 | 86.0 | 233.7 | 3372.91 | 1243.32 | 1175.34 |
+| ad2_vial_padim_256 | 17.55 | 7.39 | 29.7 | 42.2 | 54.0 | 75.7 | 1911.04 | 1118.49 | 860.71 |
+| ad2_vial_patchcore_256 | 1646.26 | 53.50 | 137.1 | 179.1 | 164.3 | 204.8 | 4185.46 | 1596.80 | 1599.92 |
+| mvtecad_bottle_padim_256 | 11.68 | 4.87 | 33.1 | 43.3 | 53.6 | 74.7 | 1851.07 | 985.88 | 808.12 |
+
+- 再計測の画像・画素 AUROC（engine）は 4 条件とも `phase=accuracy` と同値（例: AD2 vial PatchCore 0.857993 / 0.94292）。
+- run_id: visa_candle_padim_256 `20261031T172603Z-c540e0f9`、ad2_vial_padim_256 `20261031T172753Z-33675d1c`、ad2_vial_patchcore_256 `20261031T172909Z-84d3f44c`、mvtecad_bottle_padim_256 `20261031T175943Z-df1dd5fa`。
+
+### 表 3: run_id（追跡用、`phase=accuracy`）
 
 | 条件 | run_id |
 | --- | --- |
@@ -134,12 +147,12 @@ VisA には非公開 test は無く、`1cls.csv` の train/test 定義をその�
 - 画像 AUROC の最大は `mvtecad_bottle_padim_256` の 0.996324、最小は `ad2_vial_padim_256` の 0.631378。画素 AUROC の最大は `visa_candle_padim_256` の 0.979952。
 - **engine と raw の差は小さい**。画像 AUROC の差は最大 0.002126（AD2 vial PaDiM: 0.631378 vs 0.629252）、他は 0.000078 以下または 0。画素 AUROC の差は最大 0.000322（AD2 vial PatchCore: 0.94292 vs 0.942598）。
 - **学習段階の秒数**は PatchCore（AD2 vial）が 1895.38 s で最大。PaDiM は 16.40〜128.24 s。学習ピーク RSS の最大も AD2 vial PatchCore の 4194.06 MiB。
-- **レイテンシの裾**は条件によって大きい。`mvtecad_bottle_padim_256` は model P50 80.3 ms に対し P95 825.9 ms（P95/P50 ≒ 10.3 倍）。一方 `ad2_vial_padim_256` は 30.2 → 40.2 ms（≒ 1.3 倍）。ただし全行が干渉ありのため、モデル自体の分布の裾なのか干渉由来なのかは本 CSV では区別できない（**未検証**）。
+- **レイテンシの裾**は条件によって大きい。`mvtecad_bottle_padim_256` は model P50 80.3 ms に対し P95 825.9 ms（P95/P50 ≒ 10.3 倍）。一方 `ad2_vial_padim_256` は 30.2 → 40.2 ms（≒ 1.3 倍）。干渉なし再計測（表 2b）では同条件が 33.1 → 43.3 ms（≒ 1.3 倍）であり、干渉ありの大きな裾は干渉の影響を強く受けていたことが分かる。VisA candle PaDiM は干渉なしでも P95/P50 ≒ 3.0（68.1 → 203.7 ms）と裾が残る（原因は未検証）。
 - e2e と model の差（P95）は 23.9〜111.5 ms（`ad2_vial_padim_256` 64.1 − 40.2 = 23.9、`mvtecad_bottle_padim_256` 937.4 − 825.9 = 111.5）。前後処理と画像読み込みを含む差だが、内訳は本 CSV では分離できない。
 
 ## 9. 計測上の注意
 
-1. **干渉の扱い**: 本 CSV の全行が `other_process_interference=yes`。規約上、時間・レイテンシの採用値は `phase=latency_remeasure_tryN` かつ干渉なしの行に限るが、**本 CSV には該当行が無い**。したがって「干渉なしのレイテンシは未取得」である。AUROC のみ採用値として扱う。
+1. **干渉の扱い**: `phase=accuracy` の行は `other_process_interference=yes`。時間・レイテンシの採用値は `phase=latency_remeasure_try1`（干渉なし、表 2b）とする。AUROC は両 phase で同値。VisA candle PatchCore は OOM のため干渉なしの値も未取得。
 2. **VisA candle PatchCore の OOM Kill**: 学習中に exit 137 で強制終了（カーネルログで global OOM、anon-rss 約 9.1 GiB = 9,501,928 kB 時点）。Anomalib 2.7 の `PatchcoreModel` は全パッチ特徴を list に溜め、`torch.vstack` で結合してから coreset 選択する。**仮説（未検証）**: 900 枚 × 1024 パッチ × 1536 次元 × 4 バイト ≈ 5.7 GB の特徴が結合時に二重に存在し、16 GB ホストでは収まらない。VisA candle PatchCore の精度は未取得。
    - **再実行（`phase=accuracy_retry1`、同条件 256px）**: 再び exit 137（カーネルログで global OOM、anon-rss 8,152,616 kB ≈ 7.8 GiB 時点）。開始時の MemAvailable は 8,632 MiB。
    - **回避策 1 回（`phase=accuracy_mitigation`、入力 192px、coreset 比率は既定のまま）**: これも exit 137（anon-rss 6,782,560 kB ≈ 6.5 GiB 時点、開始時 MemAvailable 8,821 MiB）。coreset 比率を下げなかったのは、coreset 選択が特徴結合の後に行われ、ピークの主因（仮説）に効かないため。

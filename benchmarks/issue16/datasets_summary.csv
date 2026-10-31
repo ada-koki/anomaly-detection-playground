@@ -1,8 +1,12 @@
 condition,phase,status,dataset,category,model,image_size,test_images,image_auroc_engine,pixel_auroc_engine,image_auroc_raw,pixel_auroc_raw,train_stage_s,test_stage_s,model_p50_ms,model_p95_ms,e2e_p50_ms,e2e_p95_ms,train_peak_rss_mib,test_peak_rss_mib,latency_peak_rss_mib,threads,other_process_interference,run_id
 visa_candle_padim_256,accuracy,ok,visa,candle,padim,256x256,160,0.878828,0.979952,0.87875,0.979997,128.24,32.79,54.1,307.9,81.5,372.9,3377.44,1205.52,1148.75,8,yes,20261031T132811Z-01d9c417
+visa_candle_padim_256,latency_remeasure_try1,ok,visa,candle,padim,256x256,160,0.878828,0.979952,0.87875,0.979997,34.13,10.36,68.1,203.7,86.0,233.7,3372.91,1243.32,1175.34,8,no,20261031T172603Z-c540e0f9
 visa_candle_patchcore_256,accuracy,oom_killed,,,,,,,,,,,,,,,,,,,,yes,
 ad2_vial_padim_256,accuracy,ok,mvtec_ad2,vial,padim,256x256,112,0.631378,0.846444,0.629252,0.846682,32.98,8.8,30.2,40.2,55.6,64.1,2008.66,1137.75,872.18,8,yes,20261031T134248Z-27de2a6f
+ad2_vial_padim_256,latency_remeasure_try1,ok,mvtec_ad2,vial,padim,256x256,112,0.631378,0.846444,0.629252,0.846682,17.55,7.39,29.7,42.2,54.0,75.7,1911.04,1118.49,860.71,8,no,20261031T172753Z-33675d1c
 ad2_vial_patchcore_256,accuracy,ok,mvtec_ad2,vial,patchcore,256x256,112,0.857993,0.94292,0.857993,0.942598,1895.38,35.48,243.9,517.1,281.0,583.7,4194.06,1852.69,1855.59,8,yes,20261031T134352Z-de865b08
+ad2_vial_patchcore_256,latency_remeasure_try1,ok,mvtec_ad2,vial,patchcore,256x256,112,0.857993,0.94292,0.857993,0.942598,1646.26,53.5,137.1,179.1,164.3,204.8,4185.46,1596.8,1599.92,8,no,20261031T172909Z-84d3f44c
 mvtecad_bottle_padim_256,accuracy,ok,mvtec_ad,bottle,padim,256x256,67,0.996324,0.97676,0.996324,0.976871,16.4,6.68,80.3,825.9,123.2,937.4,1562.87,948.86,797.42,8,yes,20261031T141724Z-a62b77c8
+mvtecad_bottle_padim_256,latency_remeasure_try1,ok,mvtec_ad,bottle,padim,256x256,67,0.996324,0.97676,0.996324,0.976871,11.68,4.87,33.1,43.3,53.6,74.7,1851.07,985.88,808.12,8,no,20261031T175943Z-df1dd5fa
 visa_candle_patchcore_256,accuracy_retry1,oom_killed,,,,,,,,,,,,,,,,,,,,yes,
 visa_candle_patchcore_mitigation,accuracy_mitigation,oom_killed,,,,,,,,,,,,,,,,,,,,yes,
