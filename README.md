@@ -60,7 +60,8 @@ python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model patc
 
 - **精度**：Anomalib の `engine.test` が返したメトリクス（提供された指標のみ）
 - **学習時間・テスト時間**：`train_stage_seconds` / `test_stage_seconds`。データ読み込み・検証を含む**工程全体**の時間であり、画像1枚の推論レイテンシではありません
-- **ホストメモリ**：親プロセスと子プロセスのRSSの、約100ms間隔でのサンプリング最大値（短いピークは取り逃す可能性あり）
+- **画像1枚あたり推論レイテンシ**：`per_image_inference_latency`。バッチサイズ1で decode / preprocess / model / postprocess / end_to_end の工程別に P50・P95 等を記録します（ウォームアップは除外）。`--latency-warmup`、`--latency-repeats`、`--latency-max-images`、`--skip-latency` で調整できます
+- **ホストメモリ**：`memory`。学習・テスト・レイテンシ計測の各工程で、親プロセスと子プロセスのRSSを約50ms間隔でサンプリングした最大値（短いピークは取り逃す可能性あり）と、プロセス生涯最大RSS（`ru_maxrss`）
 - **実験条件**：OS、Anomalib/PyTorchバージョン、入力サイズ、モデル、データ分割、seed、バッチサイズ、CPUスレッド数、引数
 - **処理方式**：現時点は `whole_image_resized_not_tiled`（全体を入力サイズに縮小、タイル処理なし）
 

@@ -1,30 +1,43 @@
 """AnomalibによるCPU優先の異常検知ベンチマーク。
 
-学習・テスト工程全体の時間と、サンプリングしたホストメモリ（RSS）を計測する。
-画像1枚当たりの推論時間は計測しない。
+学習・テスト工程全体の時間、画像1枚あたりの推論レイテンシ、
+サンプリングしたホストメモリ（RSS）を計測する。
 """
 
 from __future__ import annotations
 
 import argparse
-import json
-import math
-import os
-import platform
-import shlex
 import sys
-import threading
 import time
 import traceback
 import uuid
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Sequence
 
-SCHEMA_VERSION = 2
-DEPENDENCY_NAMES = ("torch", "torchvision", "anomalib", "lightning", "timm", "numpy")
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from adbench.latency import measure_per_image_latency
+from adbench.memory import DEFAULT_SAMPLING_INTERVAL_S, peak_rss_lifetime_mib, sampled_rss
+from adbench.report import (
+    DEPENDENCY_NAMES,
+    SCHEMA_VERSION,
+    build_base_report,
+    build_failed_report,
+    collect_environment,
+    format_command,
+    json_safe,
+    write_report,
+)
+
+# サンプリングで記録した各段階のピークRSSキー。
+_SAMPLED_PEAK_KEYS = (
+    "train_peak_rss_mib_sampled",
+    "test_peak_rss_mib_sampled",
+    "latency_peak_rss_mib_sampled",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +70,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="モデルを生成してbackbone重みを取得するだけで終了する",
     )
+    parser.add_argument(
+        "--latency-warmup",
+        type=int,
+        default=5,
+        help="レイテンシ計測前に実行するウォームアップ画像数",
+    )
+    parser.add_argument(
+        "--latency-max-images",
+        type=int,
+        default=0,
+        help="レイテンシ計測に使う最大画像数。0はテスト画像全体",
+    )
+    parser.add_argument(
+        "--latency-repeats",
+        type=int,
+        default=1,
+        help="計測対象画像を繰り返す回数",
+    )
+    parser.add_argument(
+        "--skip-latency",
+        action="store_true",
+        help="画像1枚あたりの推論レイテンシ計測を行わない",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("results"))
     return parser
 
@@ -71,6 +107,12 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser.error("--val-fraction には0より大きく1より小さい値を指定してください")
     if not 0 < args.coreset_sampling_ratio <= 1:
         parser.error("--coreset-sampling-ratio には0より大きく1以下の値を指定してください")
+    if args.latency_warmup < 0:
+        parser.error("--latency-warmup には0以上を指定してください")
+    if args.latency_max_images < 0:
+        parser.error("--latency-max-images には0以上を指定してください")
+    if args.latency_repeats < 1:
+        parser.error("--latency-repeats には1以上を指定してください")
 
     default_root = "MVTecAD" if args.dataset == "mvtec_ad" else "MVTec-4K"
     root = args.dataset_root or Path("datasets") / default_root
@@ -84,151 +126,6 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
                 "READMEを参照してデータセットをダウンロード・展開してください。"
             )
     return root
-
-
-def _process_rss_bytes(process: Any) -> int:
-    total = 0
-    try:
-        processes = [process, *process.children(recursive=True)]
-    except Exception:
-        processes = [process]
-    for child in processes:
-        try:
-            total += child.memory_info().rss
-        except Exception:
-            continue
-    return total
-
-
-@contextmanager
-def sampled_rss() -> Iterator[dict[str, float]]:
-    import psutil
-
-    process = psutil.Process(os.getpid())
-    stopped = threading.Event()
-    summary = {"peak_rss_mib": 0.0}
-
-    def poll() -> None:
-        while True:
-            current = _process_rss_bytes(process) / (1024 * 1024)
-            summary["peak_rss_mib"] = max(summary["peak_rss_mib"], current)
-            if stopped.wait(0.1):
-                break
-
-    thread = threading.Thread(target=poll, name="rss-sampler", daemon=True)
-    thread.start()
-    try:
-        yield summary
-    finally:
-        stopped.set()
-        thread.join()
-        summary["peak_rss_mib"] = round(
-            max(summary["peak_rss_mib"], _process_rss_bytes(process) / (1024 * 1024)), 2
-        )
-
-
-def json_safe(value: Any) -> Any:
-    """Lightningの評価指標をJSONに保存できる形式へ変換する。"""
-    if isinstance(value, dict):
-        return {str(k): json_safe(v) for k, v in value.items()}
-    if isinstance(value, (tuple, list)):
-        return [json_safe(v) for v in value]
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if value is None or isinstance(value, (str, int, bool)):
-        return value
-    if callable(getattr(value, "item", None)):
-        try:
-            return json_safe(value.item())
-        except (ValueError, RuntimeError):
-            pass
-    return str(value)
-
-
-def _package_version(distribution: str) -> str | None:
-    try:
-        return version(distribution)
-    except PackageNotFoundError:
-        return None
-
-
-def collect_environment() -> dict[str, Any]:
-    """重い依存ライブラリをimportせずに取得できる実行環境情報を返す。"""
-    versions: dict[str, str | None] = {"python": platform.python_version()}
-    for name in DEPENDENCY_NAMES:
-        versions[name] = _package_version(name)
-    return {
-        "host": {
-            "os": platform.platform(),
-            "machine": platform.machine(),
-            "processor": platform.processor(),
-        },
-        "cpu_logical_cores": os.cpu_count(),
-        "versions": versions,
-    }
-
-
-def format_command(argv: Sequence[str]) -> str:
-    return shlex.join(["python", "scripts/run_anomalib.py", *argv])
-
-
-def build_base_report(
-    args: argparse.Namespace,
-    root: Path,
-    run_id: str,
-    argv: Sequence[str],
-) -> dict[str, Any]:
-    environment = collect_environment()
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "status": "running",
-        "run_id": run_id,
-        "dataset": args.dataset,
-        "dataset_root": str(root.resolve()),
-        "category": args.category,
-        "model": args.model,
-        "backbone": args.backbone,
-        "backbone_is_default": args.backbone is None,
-        "coreset_sampling_ratio": (
-            args.coreset_sampling_ratio if args.model == "patchcore" else None
-        ),
-        "prefetch_weights": args.prefetch_weights,
-        "device": args.device,
-        "image_size": [args.image_size, args.image_size],
-        "image_handling": "whole_image_resized_not_tiled",
-        "train_batch_size": args.train_batch_size,
-        "eval_batch_size": args.eval_batch_size,
-        "num_workers": args.num_workers,
-        "requested_cpu_threads": args.cpu_threads,
-        "torch_num_threads": None,
-        "val_split": {"mode": "from_test", "fraction": args.val_fraction, "seed": args.seed},
-        "train_stage_seconds": None,
-        "test_stage_seconds": None,
-        "train_peak_host_rss_mib_sampled": None,
-        "test_peak_host_rss_mib_sampled": None,
-        "test_metrics": None,
-        "per_image_inference_latency": None,
-        "host": environment["host"],
-        "cpu_logical_cores": environment["cpu_logical_cores"],
-        "versions": environment["versions"],
-        "argv": list(argv),
-        "command": format_command(argv),
-    }
-
-
-def build_failed_report(base_report: dict[str, Any], error: BaseException) -> dict[str, Any]:
-    report = dict(base_report)
-    report["status"] = "failed"
-    report["error_type"] = type(error).__name__
-    report["error_message"] = str(error)
-    return report
-
-
-def write_report(path: Path, report: dict[str, Any]) -> None:
-    path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
 
 
 def _create_model(args: argparse.Namespace) -> Any:
@@ -264,11 +161,69 @@ def _create_datamodule(args: argparse.Namespace, root: Path) -> Any:
     )
 
 
+def _collect_test_image_paths(datamodule: Any) -> list[Path]:
+    """engine.test 後に setup 済みのテスト画像パスを取得する。"""
+    test_data = getattr(datamodule, "test_data", None)
+    samples = getattr(test_data, "samples", None)
+    if samples is None:
+        raise RuntimeError("テスト画像一覧（datamodule.test_data.samples）を取得できませんでした")
+
+    image_paths = samples.image_path
+    if hasattr(image_paths, "tolist"):
+        image_paths = image_paths.tolist()
+    return [Path(path) for path in image_paths]
+
+
+def _max_peak_rss_mib(memory: dict[str, Any]) -> float:
+    """プロセス寿命ピークと各段階のサンプリングピークの最大値をMiBで返す。
+
+    例外発生時にも「記録済みのサンプリング値より小さいピーク」を残さないため、
+    既存の記録値も候補に含める。
+    """
+    candidates: list[float] = [float(peak_rss_lifetime_mib())]
+    for key in ("process_lifetime_peak_rss_mib",) + _SAMPLED_PEAK_KEYS:
+        value = memory.get(key)
+        if isinstance(value, (int, float)):
+            candidates.append(float(value))
+    return max(candidates)
+
+
+def _rebuild_datamodule(datamodule: Any) -> Any:
+    """既存のDataModuleから同じ設定で作り直す必要がある場合のフック。
+
+    現状は作り直し不要のため、そのまま返す。
+    """
+    return datamodule
+
+
 def _run(
     args: argparse.Namespace,
     root: Path,
     output: Path,
     report: dict[str, Any],
+) -> None:
+    """ベンチマーク本体を実行する。
+
+    例外が発生しても finally でプロセス寿命ピークRSSを最新値に更新し、
+    失敗レポートに学習時などのサンプリングピークが反映されるようにする。
+    """
+    memory = report.setdefault("memory", {})
+    memory["sampling_interval_s"] = DEFAULT_SAMPLING_INTERVAL_S
+    memory["process_lifetime_peak_rss_mib"] = round(peak_rss_lifetime_mib(), 2)
+
+    try:
+        _run_stages(args, root, output, report, memory)
+    finally:
+        # 例外時も最新のピーク値に更新する（成功時はほぼ同値）。
+        memory["process_lifetime_peak_rss_mib"] = round(_max_peak_rss_mib(memory), 2)
+
+
+def _run_stages(
+    args: argparse.Namespace,
+    root: Path,
+    output: Path,
+    report: dict[str, Any],
+    memory: dict[str, Any],
 ) -> None:
     import torch
     from anomalib.engine import Engine
@@ -297,25 +252,49 @@ def _run(
         num_sanity_val_steps=0,
     )
 
-    with sampled_rss() as fit_memory:
+    with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as fit_memory:
         fit_start = time.perf_counter()
         engine.fit(model=model, datamodule=datamodule)
         fit_seconds = time.perf_counter() - fit_start
-    with sampled_rss() as test_memory:
+    memory["train_peak_rss_mib_sampled"] = fit_memory["peak_rss_mib"]
+
+    with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as test_memory:
         test_start = time.perf_counter()
         test_metrics = engine.test(model=model, datamodule=datamodule)
         test_seconds = time.perf_counter() - test_start
+    memory["test_peak_rss_mib_sampled"] = test_memory["peak_rss_mib"]
 
     report.update(
         {
             "train_stage_seconds": round(fit_seconds, 3),
             "test_stage_seconds": round(test_seconds, 3),
-            "train_peak_host_rss_mib_sampled": fit_memory["peak_rss_mib"],
-            "test_peak_host_rss_mib_sampled": test_memory["peak_rss_mib"],
             "test_metrics": json_safe(test_metrics),
-            "status": "ok",
         }
     )
+    # 旧キーは互換のため残す。
+    report["train_peak_host_rss_mib_sampled"] = fit_memory["peak_rss_mib"]
+    report["test_peak_host_rss_mib_sampled"] = test_memory["peak_rss_mib"]
+
+    if args.skip_latency:
+        report["per_image_inference_latency"] = {
+            "skipped": True,
+            "reason": "--skip-latency",
+        }
+    else:
+        image_paths = _collect_test_image_paths(datamodule)
+        latency_result = measure_per_image_latency(
+            model,
+            image_paths,
+            warmup=args.latency_warmup,
+            max_images=(None if args.latency_max_images == 0 else args.latency_max_images),
+            repeats=args.latency_repeats,
+        )
+        report["per_image_inference_latency"] = latency_result
+        memory["latency_peak_rss_mib_sampled"] = latency_result[
+            "latency_peak_rss_mib_sampled"
+        ]
+
+    report["status"] = "ok"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -347,3 +326,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
