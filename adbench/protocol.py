@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from adbench.interference import thresholds_from_dict, thresholds_to_dict
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROTOCOL_PATH = _REPO_ROOT / "configs" / "protocols" / "mvtec_ad_v1.json"
 
@@ -34,6 +36,7 @@ _TOP_LEVEL_FIELDS = {
     "num_workers",
     "cpu_threads",
     "models",
+    "latency_interference",
 }
 _BASE_MODEL_FIELDS = {
     "backbone",
@@ -89,6 +92,7 @@ class Protocol:
     num_workers: int
     cpu_threads: int
     models: dict[str, ModelConfig]
+    latency_interference: dict[str, Any] | None = None
 
 
 def _expect_mapping(value: Any, where: str) -> Mapping[str, Any]:
@@ -288,6 +292,17 @@ def protocol_from_dict(data: Mapping[str, Any]) -> Protocol:
             raise ProtocolError("models のキーには空でない文字列を指定してください")
         models[model_name] = _model_config_from_dict(model_name, model_value)
 
+    latency_interference: dict[str, Any] | None = None
+    interference_value = raw.get("latency_interference")
+    if interference_value is not None:
+        try:
+            thresholds = thresholds_from_dict(interference_value)
+        except ValueError as error:
+            raise ProtocolError(
+                f"latency_interference が不正です: {error}"
+            ) from error
+        latency_interference = thresholds_to_dict(thresholds)
+
     return Protocol(
         protocol_name=protocol_name,
         protocol_version=protocol_version,
@@ -301,6 +316,7 @@ def protocol_from_dict(data: Mapping[str, Any]) -> Protocol:
         num_workers=num_workers,
         cpu_threads=cpu_threads,
         models=models,
+        latency_interference=latency_interference,
     )
 
 
@@ -349,7 +365,7 @@ def _model_config_to_dict(model_config: ModelConfig) -> dict[str, Any]:
 
 def protocol_to_dict(protocol: Protocol) -> dict[str, Any]:
     """レポートへ保存できるJSON互換の辞書へ変換する。"""
-    return {
+    result: dict[str, Any] = {
         "protocol_name": protocol.protocol_name,
         "protocol_version": protocol.protocol_version,
         "dataset": protocol.dataset,
@@ -366,6 +382,9 @@ def protocol_to_dict(protocol: Protocol) -> dict[str, Any]:
             for name in sorted(protocol.models)
         },
     }
+    if protocol.latency_interference is not None:
+        result["latency_interference"] = dict(protocol.latency_interference)
+    return result
 
 
 def apply_overrides(protocol: Protocol, overrides: Mapping[str, Any]) -> Protocol:

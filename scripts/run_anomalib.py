@@ -39,6 +39,10 @@ from adbench.devices import (
     read_provenance,
     write_provenance,
 )
+from adbench.interference import (
+    measure_with_interference_check,
+    thresholds_from_dict,
+)
 from adbench.latency import measure_per_image_latency
 from adbench.preprocess import DEFAULT_PREPROCESS_MODE, PREPROCESS_MODES
 from adbench.manifest import (
@@ -298,6 +302,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="計測対象画像を繰り返す回数",
     )
     parser.add_argument(
+        "--latency-max-retries",
+        type=int,
+        default=1,
+        help=(
+            "レイテンシ計測中に他プロセスの干渉を検出した場合の再計測回数"
+            "（0で再計測しない。判定閾値はプロトコルの latency_interference、"
+            "未指定時は暫定既定値）"
+        ),
+    )
+    parser.add_argument(
         "--skip-latency",
         action="store_true",
         help="画像1枚あたりの推論レイテンシ計測を行わない",
@@ -364,6 +378,8 @@ def _resolve_args(
     args.eval_batch_size = protocol.eval_batch_size
     args.num_workers = protocol.num_workers
     args.cpu_threads = protocol.cpu_threads
+    # 干渉判定の閾値（None なら暫定既定値）。レポートの protocol.config にも残る。
+    args.latency_interference = protocol.latency_interference
 
     model_config = protocol.models.get(args.model, ModelConfig())
     args.backbone = model_config.backbone
@@ -653,6 +669,8 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser.error("--latency-max-images には0以上を指定してください")
     if args.latency_repeats < 1:
         parser.error("--latency-repeats には1以上を指定してください")
+    if args.latency_max_retries < 0:
+        parser.error("--latency-max-retries には0以上を指定してください")
 
     default_root = {
         "mvtec_ad": "MVTecAD",
@@ -1675,17 +1693,35 @@ def _run_stages(
             "skipped": True,
             "reason": "--skip-latency",
         }
+        report["latency_interference"] = None
+        report["latency_valid"] = None
     else:
         image_paths = _collect_test_image_paths(datamodule)
-        latency_result = measure_per_image_latency(
-            model,
-            image_paths,
-            warmup=args.latency_warmup,
-            max_images=(None if args.latency_max_images == 0 else args.latency_max_images),
-            repeats=args.latency_repeats,
-            preprocess_mode=args.latency_preprocess,
+        thresholds = thresholds_from_dict(getattr(args, "latency_interference", None))
+        latency_result, interference_record = measure_with_interference_check(
+            lambda: measure_per_image_latency(
+                model,
+                image_paths,
+                warmup=args.latency_warmup,
+                max_images=(
+                    None if args.latency_max_images == 0 else args.latency_max_images
+                ),
+                repeats=args.latency_repeats,
+                preprocess_mode=args.latency_preprocess,
+            ),
+            thresholds,
+            max_retries=args.latency_max_retries,
         )
         report["per_image_inference_latency"] = latency_result
+        report["latency_interference"] = interference_record
+        report["latency_valid"] = interference_record["latency_valid"]
+        if interference_record["latency_valid"] is False:
+            print(
+                "警告: レイテンシ計測中に他プロセスの干渉を検出しました"
+                f"（{'; '.join(interference_record['reasons'])}）。"
+                "latency_valid=false として記録します。",
+                file=sys.stderr,
+            )
         memory["latency_peak_rss_mib_sampled"] = latency_result[
             "latency_peak_rss_mib_sampled"
         ]
