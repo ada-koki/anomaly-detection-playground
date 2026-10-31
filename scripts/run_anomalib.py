@@ -46,6 +46,7 @@ from adbench.manifest import (
     write_manifest,
 )
 from adbench.memory import DEFAULT_SAMPLING_INTERVAL_S, peak_rss_lifetime_mib, sampled_rss
+from adbench.mvtec4k import build_resolution_condition, has_foreground_dir
 from adbench.protocol import (
     DEFAULT_PROTOCOL_PATH,
     ModelConfig,
@@ -496,6 +497,14 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
             parser.error(
                 f"{root / args.category} に train/good または test/good が見つかりません。"
                 "READMEを参照してデータセットをダウンロード・展開してください。"
+            )
+        if args.dataset == "mvtec_4k" and has_foreground_dir(root, args.category):
+            parser.error(
+                "MVTec-4K の生配置には foreground/ があり、Anomalib 2.7 の "
+                "MVTecAD は foreground 配下の画像を train/test の重複行として"
+                "取り込みます。scripts/validate_mvtec4k.py --make-view OUTPUT で"
+                "clean view を作成し、--dataset-root にそのディレクトリを指定して"
+                "ください。"
             )
     return root
 
@@ -1380,6 +1389,12 @@ def main(argv: list[str] | None = None) -> int:
     protocol_report = _build_protocol_report(protocol, protocol_path, overrides)
     report = build_base_report(args, root, run_id, argv_list, protocol_report)
     report["training_mode"] = determine_training_mode(args.checkpoint)
+    # 元画像解像度とモデル入力解像度は別条件であるため、レポートで区別できるようにする。
+    report["resolution_condition"] = build_resolution_condition(
+        root,
+        args.category,
+        args.image_size,
+    )
     if args.checkpoint is not None:
         report["checkpoint_sha256"] = _sha256_file(args.checkpoint)
         report["train_stage_seconds"] = None
