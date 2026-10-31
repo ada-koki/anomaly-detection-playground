@@ -12,8 +12,7 @@
   （`--image-size`）のサイズには依存しない。
 - 連結成分数は 8 連結（斜めも同一成分）で数える。scipy が無い環境では `None` になる。
   ラベリングはメモリ節約のため外接矩形の内側だけで行う。
-- 面積率がちょうど 1 の全面マスクや、マスクファイルが存在するが全画素 0 の場合は
-  面積 0 として扱い、`classify_size(0.0)` は最小の帯（`tiny`）になる。全画素 0 の
+- マスクファイルが存在するが全画素 0 の場合は面積 0 として扱い、`classify_size(0.0)` は最小の帯（`tiny`）になる。全画素 0 の
   マスクは「欠陥面積が 0 の異常画像」として `overall` と異常種別別には数えられる。
 
 ## 2. サイズ帯
@@ -108,6 +107,12 @@
 `counts.n_abnormal_without_size_band` で確認できる。
 
 ## 8. 使い方
+
+`scripts/run_anomalib.py` は生スコア評価（`--skip-raw-eval` でない場合）で自動的に
+画像ごとのレコードを run ディレクトリの `per_image.jsonl` に保存し、集計を
+`report.json` の `defect_size` に記録する（閾値は `PostProcessor` の検証集合由来の値）。
+複数 run の比較は `scripts/defect_size_report.py --runs DIR... --out-dir OUT` で行う。
+以下は個別に呼び出す場合の例。
 
 ### 8.1 生スコア評価で画像ごとのレコードを集める
 
