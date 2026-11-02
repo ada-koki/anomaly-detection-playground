@@ -1,7 +1,9 @@
 """実験結果の集計。
 
 `runs.jsonl` の 1 行と report.json から runs テーブルを作り、
-(model, category, image_size, cpu_threads, execution_mode) ごとの summary を作る。
+(model, category, image_size, cpu_threads, execution_mode, variant) ごとの summary を作る。
+``variant`` はプロトコル逸脱を伴う実行条件（例: PatchCore のチャンク coreset）を表し、
+既定条件の結果と同じグループに混ぜないために使う（既定条件では空）。
 標準ライブラリのみを使い、欠損値を 0 や NaN で埋めない。
 """
 
@@ -24,6 +26,7 @@ RUN_COLUMNS = [
     "image_size",
     "cpu_threads",
     "execution_mode",
+    "variant",
     "repeat",
     "status",
     "image_AUROC",
@@ -69,6 +72,7 @@ SUMMARY_COLUMNS = [
     "image_size",
     "cpu_threads",
     "execution_mode",
+    "variant",
     "n_runs",
     "n_ok",
     "n_failed",
@@ -149,11 +153,29 @@ def extract_metrics(
     if isinstance(protocol_name, str) and protocol_name:
         metrics["protocol_name"] = protocol_name
 
+    variant = variant_of_report(report)
+    if variant:
+        metrics["variant"] = variant
+
     manifest = _get(report, "data_split", "manifest_sha256")
     if isinstance(manifest, str) and manifest:
         metrics["manifest_sha256"] = manifest
 
     return metrics, notes
+
+
+def variant_of_report(report: Mapping[str, Any] | None) -> str | None:
+    """report からプロトコル逸脱を伴う実行条件のラベルを作る。既定条件なら None。"""
+
+    if not isinstance(report, Mapping):
+        return None
+    mitigation = report.get("training_memory_mitigation")
+    if isinstance(mitigation, Mapping) and mitigation.get("coreset_mode") == "chunked":
+        chunk_images = mitigation.get("chunk_images")
+        if isinstance(chunk_images, int) and not isinstance(chunk_images, bool):
+            return f"chunked_coreset_{chunk_images}img"
+        return "chunked_coreset"
+    return None
 
 
 def build_runs_table(
@@ -225,7 +247,7 @@ def summarize_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     別グループとして集計する（CPU のみの結果と GPU 実行の結果を混ぜない）。
     """
 
-    groups: dict[tuple[Any, Any, Any, Any, Any], list[Mapping[str, Any]]] = {}
+    groups: dict[tuple[Any, Any, Any, Any, Any, Any], list[Mapping[str, Any]]] = {}
     for row in rows:
         key = (
             row.get("model"),
@@ -233,6 +255,7 @@ def summarize_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
             row.get("image_size"),
             row.get("cpu_threads"),
             row.get("execution_mode"),
+            row.get("variant") or None,
         )
         groups.setdefault(key, []).append(row)
 
@@ -243,6 +266,7 @@ def summarize_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         image_size,
         cpu_threads,
         execution_mode,
+        variant,
     ), group in groups.items():
         ok_rows = [row for row in group if row.get("status") == "ok"]
         item: dict[str, Any] = {
@@ -251,6 +275,7 @@ def summarize_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
             "image_size": image_size,
             "cpu_threads": cpu_threads,
             "execution_mode": execution_mode,
+            "variant": variant,
             "n_runs": len(group),
             "n_ok": len(ok_rows),
             "n_failed": len(group) - len(ok_rows),
@@ -420,9 +445,9 @@ def render_report_md(
     if isinstance(config_models, list):
         raw_models.extend(config_models)
     raw_categories.extend(row.get("category") for row in summary_rows)
-    raw_models.extend(row.get("model") for row in summary_rows)
+    raw_models.extend(_model_label(row) for row in summary_rows)
     raw_categories.extend(row.get("category") for row in rows)
-    raw_models.extend(row.get("model") for row in rows)
+    raw_models.extend(_model_label(row) for row in rows)
 
     categories = [
         value
@@ -435,7 +460,7 @@ def render_report_md(
 
     summary_map: dict[tuple[str, str, int, int, str], Mapping[str, Any]] = {}
     for summary_row in summary_rows:
-        model = summary_row.get("model")
+        model = _model_label(summary_row)
         category = summary_row.get("category")
         image_size = _norm_int(summary_row.get("image_size"))
         cpu_threads = _norm_int(summary_row.get("cpu_threads"))
@@ -608,6 +633,7 @@ def _run_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
         str(row.get("category") or ""),
         _norm_int(row.get("image_size")),
         _norm_int(row.get("cpu_threads")),
+        str(row.get("variant") or ""),
         _norm_int(row.get("repeat")),
         str(row.get("run_key") or ""),
     )
@@ -622,7 +648,17 @@ def _summary_sort_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
         _execution_mode_sort_key(
             _execution_mode_label(row.get("execution_mode"))
         ),
+        str(row.get("variant") or ""),
     )
+
+
+def _model_label(row: Mapping[str, Any]) -> Any:
+    """レポート表示用のモデル名。variant があれば併記して既定条件と区別する。"""
+    model = row.get("model")
+    variant = row.get("variant")
+    if isinstance(model, str) and isinstance(variant, str) and variant:
+        return f"{model} [{variant}]"
+    return model
 
 
 def _execution_mode_label(value: Any) -> str:

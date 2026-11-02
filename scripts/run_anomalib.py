@@ -168,6 +168,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="PatchCore用のcoresetサンプリング比率。プロトコル設定を上書きする場合に指定",
     )
     parser.add_argument(
+        "--patchcore-coreset-mode",
+        choices=("global", "chunked"),
+        default="global",
+        help=(
+            "PatchCore の coreset 選択方式。global は Anomalib 既定（全特徴を結合して"
+            "全体 KCenterGreedy）。chunked は --patchcore-chunk-images 枚ごとに選択する"
+            "近似（学習中のメモリを抑える、プロトコル逸脱として report.json に記録）"
+        ),
+    )
+    parser.add_argument(
+        "--patchcore-chunk-images",
+        type=int,
+        default=None,
+        help="--patchcore-coreset-mode chunked の 1 チャンクあたり学習画像枚数",
+    )
+    parser.add_argument(
+        "--max-train-feature-mib",
+        type=float,
+        default=None,
+        help=(
+            "PatchCore 学習時の特徴量メモリ見積り（概算）の上限 MiB。超える場合は"
+            "学習を開始せずに失敗として report.json を書く（OOM Kill の回避）"
+        ),
+    )
+    parser.add_argument(
         "--num-neighbors",
         type=int,
         default=None,
@@ -601,6 +626,27 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
             )
         if args.num_neighbors is None or args.num_neighbors < 1:
             parser.error("PatchCoreでは num_neighbors に1以上を指定してください")
+        if args.patchcore_coreset_mode == "chunked":
+            if args.patchcore_chunk_images is None or args.patchcore_chunk_images < 1:
+                parser.error(
+                    "--patchcore-coreset-mode chunked では --patchcore-chunk-images に"
+                    "1以上を指定してください"
+                )
+        elif args.patchcore_chunk_images is not None:
+            parser.error(
+                "--patchcore-chunk-images は --patchcore-coreset-mode chunked の時だけ指定できます"
+            )
+        if args.max_train_feature_mib is not None and args.max_train_feature_mib <= 0:
+            parser.error("--max-train-feature-mib には0より大きい値を指定してください")
+    elif (
+        args.patchcore_coreset_mode != "global"
+        or args.patchcore_chunk_images is not None
+        or args.max_train_feature_mib is not None
+    ):
+        parser.error(
+            "--patchcore-coreset-mode / --patchcore-chunk-images / --max-train-feature-mib は"
+            "PatchCore でのみ指定できます"
+        )
     if args.latency_warmup < 0:
         parser.error("--latency-warmup には0以上を指定してください")
     if args.latency_max_images < 0:
@@ -644,6 +690,110 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     return root
 
 
+def _patchcore_feature_dim(args: argparse.Namespace) -> int | None:
+    """wide_resnet50_2 の layer2+layer3 のときだけ特徴次元（1536）を返す。
+
+    それ以外の backbone / 層構成では次元を推定しない（見積りを作らない）。
+    """
+    layers = list(args.layers) if args.layers else []
+    if args.backbone == "wide_resnet50_2" and layers == ["layer2", "layer3"]:
+        return 512 + 1024
+    return None
+
+
+def _check_patchcore_train_memory(
+    args: argparse.Namespace,
+    datamodule: Any,
+    report: dict[str, Any],
+    memory: dict[str, Any],
+) -> None:
+    """学習前に特徴量メモリを概算し、上限超過なら学習を開始せずに停止する。"""
+    from dataclasses import asdict
+
+    from adbench.patchcore_memory import (
+        bytes_to_mib,
+        check_memory_budget,
+        estimate_patchcore_feature_memory,
+        read_mem_available_mib,
+    )
+
+    memory["mem_available_mib_at_start"] = read_mem_available_mib()
+    datamodule.setup("fit")
+    train_data = getattr(datamodule, "train_data", None)
+    n_train = len(train_data) if train_data is not None else None
+    report["train_image_count"] = n_train
+    feature_dim = _patchcore_feature_dim(args)
+    if n_train is None or n_train < 1 or feature_dim is None or getattr(args, "tile_size", None) is not None:
+        report["training_memory_estimate"] = {
+            "is_estimate": True,
+            "available": False,
+            "note": (
+                "学習画像枚数・特徴次元が確定しない構成（backbone/層が既定外、"
+                "またはタイル分割）では見積りを作りません。"
+            ),
+        }
+        if args.max_train_feature_mib is not None:
+            raise RuntimeError(
+                "--max-train-feature-mib が指定されていますが、この構成では見積りを"
+                "作れないため判定できません"
+            )
+        return
+    estimate = estimate_patchcore_feature_memory(
+        n_images=n_train,
+        image_size=args.image_size,
+        feature_dim=feature_dim,
+        coreset_mode=args.patchcore_coreset_mode,
+        chunk_images=args.patchcore_chunk_images,
+        sampling_ratio=args.coreset_sampling_ratio,
+    )
+    record = asdict(estimate)
+    record["is_estimate"] = True
+    record["available"] = True
+    record["feature_mib"] = bytes_to_mib(estimate.feature_bytes)
+    record["peak_mib_estimate"] = bytes_to_mib(estimate.peak_bytes_estimate)
+    within, message = check_memory_budget(
+        estimate.peak_bytes_estimate, args.max_train_feature_mib
+    )
+    record["max_train_feature_mib"] = args.max_train_feature_mib
+    record["within_budget"] = within
+    record["budget_message"] = message
+    report["training_memory_estimate"] = record
+    if not within:
+        raise RuntimeError(message)
+
+
+def _record_patchcore_mitigation(
+    args: argparse.Namespace, model: Any, report: dict[str, Any]
+) -> None:
+    """学習後の memory_bank とチャンク統計を training_memory_mitigation に記録する。"""
+    from adbench.patchcore_memory import build_mitigation_record
+
+    bank = getattr(getattr(model, "model", None), "memory_bank", None)
+    shape = getattr(bank, "shape", None)
+    rows = int(shape[0]) if shape is not None and len(shape) >= 1 else None
+    estimate = report.get("training_memory_estimate") or {}
+    report["training_memory_mitigation"] = build_mitigation_record(
+        args.patchcore_coreset_mode,
+        args.patchcore_chunk_images,
+        args.coreset_sampling_ratio,
+        image_size=args.image_size,
+        feature_dim=_patchcore_feature_dim(args),
+        train_image_count=report.get("train_image_count"),
+        mem_available_mib_at_start=report.get("memory", {}).get(
+            "mem_available_mib_at_start"
+        ),
+        max_train_feature_mib=args.max_train_feature_mib,
+        chunk_stats=getattr(model, "chunk_stats", None),
+        memory_bank_rows=rows,
+        memory_bank_dtype=str(bank.dtype) if bank is not None else None,
+        memory_bank_bytes=(
+            int(bank.numel() * bank.element_size()) if bank is not None else None
+        ),
+    )
+    if estimate.get("available") is False:
+        report["training_memory_mitigation"]["estimate_available"] = False
+
+
 def _create_model(args: argparse.Namespace) -> Any:
     from anomalib.models import EfficientAd, Padim, Patchcore
 
@@ -679,6 +829,10 @@ def _create_model(args: argparse.Namespace) -> Any:
             model_kwargs["coreset_sampling_ratio"] = args.coreset_sampling_ratio
         if args.num_neighbors is not None:
             model_kwargs["num_neighbors"] = args.num_neighbors
+        if args.patchcore_coreset_mode == "chunked":
+            from adbench.patchcore_chunked import make_chunked_patchcore
+
+            return make_chunked_patchcore(args.patchcore_chunk_images, **model_kwargs)
     return model_cls(**model_kwargs)
 
 
@@ -1351,11 +1505,15 @@ def _run_stages(
                 validation_called=False,
             )
     else:
+        if args.model == "patchcore":
+            _check_patchcore_train_memory(args, datamodule, report, memory)
         with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as fit_memory:
             fit_start = time.perf_counter()
             engine.fit(model=model, datamodule=datamodule)
             fit_seconds = time.perf_counter() - fit_start
         memory["train_peak_rss_mib_sampled"] = fit_memory["peak_rss_mib"]
+        if args.model == "patchcore":
+            _record_patchcore_mitigation(args, model, report)
 
         # 学習直後の実デバイスを観測する（意図しないフォールバック検知）。
         observed_train = _observe_model_device(model)
