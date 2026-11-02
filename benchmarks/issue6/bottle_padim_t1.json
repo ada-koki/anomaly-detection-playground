@@ -1,0 +1,154 @@
+{
+  "schema_version": 3,
+  "status": "ok",
+  "run_id": "20261031T071433Z-e297fd57",
+  "dataset": "mvtec_ad",
+  "dataset_root": "datasets/MVTecAD",
+  "category": "bottle",
+  "model": "padim",
+  "backbone": null,
+  "backbone_is_default": true,
+  "coreset_sampling_ratio": null,
+  "prefetch_weights": false,
+  "device": "cpu",
+  "image_size": [
+    256,
+    256
+  ],
+  "image_handling": "whole_image_resized_not_tiled",
+  "train_batch_size": 1,
+  "eval_batch_size": 1,
+  "num_workers": 0,
+  "requested_cpu_threads": 1,
+  "torch_num_threads": 1,
+  "val_split": {
+    "mode": "from_test",
+    "fraction": 0.2,
+    "seed": 42
+  },
+  "latency_settings": {
+    "warmup": 5,
+    "max_images": 0,
+    "repeats": 3,
+    "skip_latency": false
+  },
+  "train_stage_seconds": 19.028,
+  "test_stage_seconds": 7.123,
+  "timing_notes": {
+    "train_stage_seconds": "engine.fit 全体の所要時間です。",
+    "test_stage_seconds": "engine.test 全体（テストデータ読み込み・評価指標計算を含む）の所要時間です。画像1枚あたりの推論時間ではなく、per_image_inference_latency.end_to_end_ms とは意味が異なるため混同しないでください。",
+    "per_image_inference_latency": "画像1枚ごとに decode / preprocess / model / postprocess / end_to_end をtime.perf_counter で計測した結果です。ウォームアップ画像は集計から除外します。"
+  },
+  "memory": {
+    "train_peak_rss_mib_sampled": 1735.78,
+    "test_peak_rss_mib_sampled": 963.95,
+    "latency_peak_rss_mib_sampled": 802.26,
+    "process_lifetime_peak_rss_mib": 1735.78,
+    "sampling_interval_s": 0.05,
+    "notes": "RSSはpsutilでプロセスツリーをサンプリングした推定値です。サンプリング間隔より短いピークは取り逃す可能性があります。process_lifetime_peak_rss_mib は resource.getrusage(RUSAGE_SELF).ru_maxrss に基づく自プロセス生涯最大RSSであり、学習・テスト・推論などの工程別の値ではありません。num_workers=0 の場合、通常はデータ読み込み用の子プロセスは発生しません。"
+  },
+  "train_peak_host_rss_mib_sampled": 1735.78,
+  "test_peak_host_rss_mib_sampled": 963.95,
+  "test_metrics": [
+    {
+      "image_AUROC": 0.9963235855102539,
+      "image_F1Score": 0.9591836929321289,
+      "pixel_AUROC": 0.9767603278160095,
+      "pixel_F1Score": 0.6497358083724976
+    }
+  ],
+  "per_image_inference_latency": {
+    "model_class": "Padim",
+    "torch_num_threads": 1,
+    "batch_size": 1,
+    "input_resolution": [
+      256,
+      256
+    ],
+    "warmup_requested": 5,
+    "warmup_images": 5,
+    "warmup_excluded_from_summary": true,
+    "max_images": null,
+    "measured_images": 62,
+    "repeats": 3,
+    "latency_samples": 186,
+    "sampling_interval_s": 0.05,
+    "latency_peak_rss_mib_sampled": 802.26,
+    "decode_ms": {
+      "count": 186,
+      "mean": 18.833359084730485,
+      "std": 1.6665545741946823,
+      "min": 17.100984987337142,
+      "p50": 18.308827478904277,
+      "p95": 21.857575746253133,
+      "max": 29.506515013054013
+    },
+    "preprocess_ms": {
+      "count": 186,
+      "mean": 1.1173913008733702,
+      "std": 0.12351387920926855,
+      "min": 0.967051018960774,
+      "p50": 1.075905020115897,
+      "p95": 1.4003982214489952,
+      "max": 1.6440579784102738
+    },
+    "model_ms": {
+      "count": 186,
+      "mean": 67.83248729983805,
+      "std": 4.78332569216083,
+      "min": 63.29089100472629,
+      "p50": 66.03123797685839,
+      "p95": 78.327375013032,
+      "max": 90.66552395233884
+    },
+    "postprocess_ms": {
+      "count": 186,
+      "mean": 0.604944101156747,
+      "std": 0.1205066772007516,
+      "min": 0.4852679558098316,
+      "p50": 0.5668429948855191,
+      "p95": 0.8608995121903718,
+      "max": 1.3237309758551419
+    },
+    "end_to_end_ms": {
+      "count": 186,
+      "mean": 88.3945881527403,
+      "std": 5.944945725244689,
+      "min": 82.37631095107645,
+      "p50": 86.35904549737461,
+      "p95": 100.27379004168324,
+      "max": 113.57744102133438
+    },
+    "notes": "decode は read_image のみ、preprocess はバッチ次元付与と pre_processor（画像テンソルを入力）、model は model.model に前処理済みテンソルを渡す時間です。postprocess は post_processor の時間です。end_to_end は decode から postprocess までの合計です。ウォームアップ画像は集計から除外しています。RSSはサンプリングに基づく推定値で、サンプリング間隔より短いピークは取り逃す可能性があります。"
+  },
+  "host": {
+    "os": "Linux-6.12.94+-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "processor": ""
+  },
+  "cpu_logical_cores": 8,
+  "versions": {
+    "python": "3.13.5",
+    "torch": "2.15.0+cpu",
+    "torchvision": "0.29.2+cpu",
+    "anomalib": "2.7.0",
+    "lightning": "2.6.6",
+    "timm": "1.0.30",
+    "numpy": "2.5.4"
+  },
+  "argv": [
+    "--dataset-root",
+    "../datasets/MVTecAD",
+    "--category",
+    "bottle",
+    "--model",
+    "padim",
+    "--cpu-threads",
+    "1",
+    "--latency-repeats",
+    "3",
+    "--output-dir",
+    "../results/i6"
+  ],
+  "command": "python scripts/run_anomalib.py --dataset-root ../datasets/MVTecAD --category bottle --model padim --cpu-threads 1 --latency-repeats 3 --output-dir ../results/i6"
+}
