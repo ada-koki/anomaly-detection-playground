@@ -1,0 +1,7 @@
+condition,status,category,model,variant,image_auroc_engine,pixel_auroc_engine,image_auroc_raw,pixel_auroc_raw,train_stage_s,train_peak_rss_mib,process_peak_rss_mib,model_p50_ms,model_p95_ms,e2e_p50_ms,e2e_p95_ms,latency_valid,latency_attempts,other_busy_cores_mean,other_busy_cores_p95,threads,run_id
+visa_cashew_padim,ok,cashew,padim,,0.806875,0.977509,0.806875,0.977574,28.822,2300.02,2300.02,23.9,29.0,34.3,42.6,True,1,0.142,0.279,8,20261031T194701Z-df7a0728
+visa_cashew_patchcore_chunked100,ok,cashew,patchcore,chunked_coreset_100img,0.97625,0.99112,0.97625,0.991039,788.868,2322.39,2331.62,241.7,281.9,255.5,297.7,True,1,0.142,0.318,8,20261031T194924Z-35a826f1
+visa_chewinggum_padim,ok,chewinggum,padim,,0.986875,0.983823,0.986875,0.983688,13.965,2085.89,2085.89,23.1,28.9,31.0,38.3,True,1,0.203,0.378,8,20261031T194752Z-227b7ca8
+visa_chewinggum_patchcore_chunked100,ok,chewinggum,patchcore,chunked_coreset_100img,0.99,0.989822,0.99,0.989677,763.815,2326.92,2335.78,236.9,1159.7,250.4,1247.9,True,1,0.584,2.223,8,20261031T200500Z-1b741e98
+visa_pcb1_padim,ok,pcb1,padim,,0.786875,0.986378,0.787031,0.986207,27.334,3409.91,3451.46,29.4,39.2,39.8,51.8,True,1,0.144,0.376,8,20261031T194827Z-44171ee7
+visa_pcb1_patchcore_chunked100,ok,pcb1,patchcore,chunked_coreset_100img,0.917969,0.996223,0.917969,0.996097,1512.531,2610.53,2617.83,634.2,1593.7,649.0,1715.0,True,1,0.878,1.534,8,20261031T202014Z-e0208b2f

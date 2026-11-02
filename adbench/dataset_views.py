@@ -543,3 +543,48 @@ def validate_view(dataset: str, root: Path | str, category: str) -> list[str]:
     if dataset == MVTEC_AD2:
         return _validate_mvtec_ad2_view(root, category)
     raise ValueError(f"未対応の dataset です: {dataset}")
+
+
+def evaluation_scope(dataset: str, root: Path | str, category: str) -> dict[str, Any]:
+    """report.json に記録する評価範囲（どの split を使ったか）を返す（Issue #32）。
+
+    ビューの ``view_manifest.json`` があればその ``source`` / ``excluded`` /
+    ``counts`` を写す。MVTec AD 2 は公開 test split（``test_public``）のみで
+    評価し、``test_private`` / ``test_private_mixed`` は正解非公開のため使わない
+    ことを ``public_test_only=True`` で明示する（マニフェストが無くても既定値で記録）。
+    """
+    root = Path(root)
+    manifest_path = root / VIEW_MANIFEST_NAME
+    info: dict[str, Any] = {}
+    manifest_found = False
+    if manifest_path.is_file():
+        try:
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            loaded = None
+        if isinstance(loaded, dict):
+            info = loaded
+            manifest_found = True
+    scope: dict[str, Any] = {
+        "dataset": dataset,
+        "category": category,
+        "view_manifest_found": manifest_found,
+        "view_manifest_category": info.get("category") if manifest_found else None,
+        "counts": dict(info.get("counts", {})) if manifest_found else None,
+    }
+    if dataset == MVTEC_AD2:
+        scope["source"] = info.get("source") or MVTEC_AD2_SOURCE
+        scope["excluded"] = list(info.get("excluded") or MVTEC_AD2_EXCLUDED)
+        scope["public_test_only"] = True
+        scope["note"] = (
+            "MVTec AD 2 は公開 test split（test_public）のみで評価している。"
+            "test_private / test_private_mixed は正解非公開のため使っていない。"
+        )
+    elif dataset == VISA:
+        scope["source"] = info.get("source") or VISA_SPLIT_CSV
+        scope["excluded"] = list(info.get("excluded") or [])
+        scope["public_test_only"] = None
+        scope["note"] = "VisA は公式分割 split_csv/1cls.csv の train / test を使っている。"
+    else:
+        raise ValueError(f"未対応の dataset です: {dataset}")
+    return scope

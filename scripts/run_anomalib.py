@@ -996,6 +996,11 @@ def _record_manifest(
         allow_val_test_overlap=allow_overlap,
     )
     report["data_split"] = build_data_split_report(summary, _threshold_selection(args))
+    if args.dataset in ("mvtec_ad2", "visa"):
+        # 評価に使った split（MVTec AD 2 は test_public のみ）を明記する（Issue #32）。
+        from adbench.dataset_views import evaluation_scope
+
+        report["evaluation_scope"] = evaluation_scope(args.dataset, root, args.category)
 
 
 def _build_protocol_report(

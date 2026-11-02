@@ -1,0 +1,16 @@
+condition,dataset,category,model,variant,status,image_auroc,pixel_auroc,train_stage_seconds,test_stage_seconds,peak_rss_mib,e2e_p95_ms,latency_valid,train_images,test_images,run_id,within_budget,budget_reasons
+visa_candle_padim,visa,candle,padim,,ok,0.8788281679153442,0.9799515604972839,128.244,32.786,3414.98,372.9456809174734,,900,160,20261031T132811Z-01d9c417,True,
+visa_candle_patchcore_global,visa,candle,patchcore,,oom_killed,,,,,,,,,,,False,status=oom_killed
+visa_candle_patchcore_global_retry1,visa,candle,patchcore,,oom_killed,,,,,,,,,,,False,status=oom_killed
+visa_candle_patchcore_global_mitigation,visa,candle,patchcore,,oom_killed,,,,,,,,,,,False,status=oom_killed
+visa_candle_patchcore_global_guard,visa,candle,patchcore,,memory_guard_stopped,,,,,,,,,,,False,status=memory_guard_stopped
+visa_candle_patchcore_chunked100,visa,candle,patchcore,chunked_coreset_100img,ok,0.9671874642372131,0.9917857050895691,1748.553,129.284,2572.51,853.5551493056115,,900,160,20261031T182701Z-24d16eda,True,
+visa_cashew_padim,visa,cashew,padim,,ok,0.8068749904632568,0.9775092601776123,28.822,5.632,2300.02,42.61297560879029,True,450,120,20261031T194701Z-df7a0728,True,
+visa_chewinggum_padim,visa,chewinggum,padim,,ok,0.9868749380111694,0.9838225841522217,13.965,5.413,2085.89,38.25626608449965,True,453,120,20261031T194752Z-227b7ca8,True,
+visa_pcb1_padim,visa,pcb1,padim,,ok,0.7868750095367432,0.9863780736923218,27.334,7.389,3451.46,51.81195657933128,True,904,160,20261031T194827Z-44171ee7,True,
+visa_cashew_patchcore_chunked100,visa,cashew,patchcore,chunked_coreset_100img,ok,0.9762501120567322,0.9911200404167175,788.868,66.354,2331.62,297.693493263796,True,450,120,20261031T194924Z-35a826f1,True,
+visa_chewinggum_patchcore_chunked100,visa,chewinggum,patchcore,chunked_coreset_100img,ok,0.9900000095367432,0.9898220300674438,763.815,44.797,2335.78,1247.8879728063475,True,453,120,20261031T200500Z-1b741e98,True,
+visa_pcb1_patchcore_chunked100,visa,pcb1,patchcore,chunked_coreset_100img,ok,0.9179686903953552,0.9962225556373596,1512.531,125.756,2617.83,1715.0118463963718,True,904,160,20261031T202014Z-e0208b2f,True,
+ad2_vial_padim,mvtec_ad2,vial,padim,,ok,0.6313775181770325,0.846444308757782,32.979,8.796,2008.66,64.0532236720901,,291,112,20261031T134248Z-27de2a6f,True,
+ad2_vial_patchcore_global,mvtec_ad2,vial,patchcore,,ok,0.8579932451248169,0.9429197907447815,1895.38,35.475,4224.95,583.7064181338063,,291,112,20261031T134352Z-de865b08,False,train_stage_seconds=1895.38 > 1800
+ad2_vial_patchcore_chunked100,mvtec_ad2,vial,patchcore,chunked_coreset_100img,ok,0.8639456033706665,0.9437527656555176,586.405,34.365,2241.39,1222.8410800220445,,291,112,20261031T190316Z-1814b883,True,
