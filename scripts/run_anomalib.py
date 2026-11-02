@@ -90,7 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="標準プロトコルJSON。省略時は configs/protocols/mvtec_ad_v1.json",
     )
-    parser.add_argument("--dataset", choices=("mvtec_ad", "mvtec_4k"), default=None)
+    parser.add_argument(
+        "--dataset",
+        choices=("mvtec_ad", "mvtec_4k", "mvtec_ad2", "visa"),
+        default=None,
+        help="データセット。省略時はプロトコルの dataset を使う。",
+    )
     parser.add_argument("--dataset-root", type=Path, default=None)
     parser.add_argument("--category", default="bottle")
     parser.add_argument(
@@ -603,25 +608,39 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     if args.latency_repeats < 1:
         parser.error("--latency-repeats には1以上を指定してください")
 
-    default_root = "MVTecAD" if args.dataset == "mvtec_ad" else "MVTec-4K"
+    default_root = {
+        "mvtec_ad": "MVTecAD",
+        "mvtec_4k": "MVTec-4K",
+        "mvtec_ad2": "MVTecAD2_view",
+        "visa": "VisA_view",
+    }[args.dataset]
     root = args.dataset_root or Path("datasets") / default_root
 
     # 重み取得だけを行う場合はデータセット配置を要求しない。
     if args.manifest_only or not args.prefetch_weights:
-        # ダウンロード時間を計測に含めないため、実行前にデータセットの配置を確認する。
-        if not all((root / args.category / split / "good").is_dir() for split in ("train", "test")):
-            parser.error(
-                f"{root / args.category} に train/good または test/good が見つかりません。"
-                "READMEを参照してデータセットをダウンロード・展開してください。"
-            )
-        if args.dataset == "mvtec_4k" and has_foreground_dir(root, args.category):
-            parser.error(
-                "MVTec-4K の生配置には foreground/ があり、Anomalib 2.7 の "
-                "MVTecAD は foreground 配下の画像を train/test の重複行として"
-                "取り込みます。scripts/validate_mvtec4k.py --make-view OUTPUT で"
-                "clean view を作成し、--dataset-root にそのディレクトリを指定して"
-                "ください。"
-            )
+        if args.dataset in ("mvtec_ad2", "visa"):
+            # Anomalib のデータモジュールによる自動ダウンロードを避けるため、
+            # ビューの配置を先に検証する（生配置ならビュー作成を案内する）。
+            from adbench.dataset_views import validate_view
+
+            problems = validate_view(args.dataset, root, args.category)
+            if problems:
+                parser.error("\n".join(problems))
+        else:
+            # ダウンロード時間を計測に含めないため、実行前にデータセットの配置を確認する。
+            if not all((root / args.category / split / "good").is_dir() for split in ("train", "test")):
+                parser.error(
+                    f"{root / args.category} に train/good または test/good が見つかりません。"
+                    "READMEを参照してデータセットをダウンロード・展開してください。"
+                )
+            if args.dataset == "mvtec_4k" and has_foreground_dir(root, args.category):
+                parser.error(
+                    "MVTec-4K の生配置には foreground/ があり、Anomalib 2.7 の "
+                    "MVTecAD は foreground 配下の画像を train/test の重複行として"
+                    "取り込みます。scripts/validate_mvtec4k.py --make-view OUTPUT で"
+                    "clean view を作成し、--dataset-root にそのディレクトリを指定して"
+                    "ください。"
+                )
     return root
 
 
@@ -686,10 +705,9 @@ def _prepare_efficientad_pretrained_model(model: Any) -> None:
 
 
 def _create_datamodule(args: argparse.Namespace, root: Path) -> Any:
-    from anomalib.data import MVTecAD
     from anomalib.data.utils import ValSplitMode
 
-    kwargs: dict[str, Any] = {
+    common: dict[str, Any] = {
         "root": root,
         "category": args.category,
         "train_batch_size": args.train_batch_size,
@@ -699,8 +717,19 @@ def _create_datamodule(args: argparse.Namespace, root: Path) -> Any:
         "seed": args.seed,
     }
     if args.val_split_ratio is not None:
-        kwargs["val_split_ratio"] = args.val_split_ratio
-    return MVTecAD(**kwargs)
+        common["val_split_ratio"] = args.val_split_ratio
+
+    if args.dataset == "visa":
+        # ビュー（visa_pytorch/<category>）が揃っていれば Visa.prepare_data は
+        # ダウンロードも apply_cls1_split も行わない想定（実機未検証）。
+        from anomalib.data import Visa
+
+        return Visa(**common)
+
+    # mvtec_ad / mvtec_4k / mvtec_ad2 は MVTec 形式の配置を MVTecAD で読む。
+    from anomalib.data import MVTecAD
+
+    return MVTecAD(**common)
 
 
 def _test_samples(datamodule: Any) -> Any:

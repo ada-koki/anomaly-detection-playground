@@ -1,0 +1,30 @@
+{
+  "protocol_name": "visa_v1",
+  "protocol_version": 1,
+  "dataset": "visa",
+  "val_split_mode": "from_test",
+  "val_split_ratio": 0.2,
+  "seed": 42,
+  "image_size": 256,
+  "train_batch_size": 1,
+  "eval_batch_size": 1,
+  "num_workers": 0,
+  "cpu_threads": 0,
+  "models": {
+    "padim": {
+      "backbone": "resnet18",
+      "layers": ["layer1", "layer2", "layer3"]
+    },
+    "patchcore": {
+      "backbone": "wide_resnet50_2",
+      "layers": ["layer2", "layer3"],
+      "coreset_sampling_ratio": 0.1,
+      "num_neighbors": 9
+    },
+    "efficient_ad": {
+      "model_size": "small",
+      "max_epochs": 1,
+      "max_steps": -1
+    }
+  }
+}

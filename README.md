@@ -11,8 +11,8 @@
 | --- | --- | --- |
 | [MVTec AD](https://www.mvtec.com/company/research/datasets/mvtec-ad) | 標準的な手法比較 | ベースライン実行対象 |
 | [MVTec-4K](https://huggingface.co/datasets/XimiaoZhang/MVTec-4K) | 高解像度、微小異常、縮小耐性 | ベースライン実行対象 |
-| [MVTec AD 2](https://www.mvtec.com/company/research/datasets/mvtec-ad-2) | 難条件での頑健性 | 今後追加 |
-| [VisA](https://amazon-visual-anomaly.s3.us-west-2.amazonaws.com/README.html) | 異なる画像分布での汎化性能 | 今後追加 |
+| [MVTec AD 2](https://www.mvtec.com/company/research/datasets/mvtec-ad-2) | 難条件での頑健性 | ビュー作成と vial での CPU 実行を確認（[検証記録](docs/verification/issue16_datasets.md)） |
+| [VisA](https://amazon-visual-anomaly.s3.us-west-2.amazonaws.com/README.html) | 異なる画像分布での汎化性能 | ビュー作成と candle での CPU 実行を確認（[検証記録](docs/verification/issue16_datasets.md)） |
 | 利用許可済みの実撮影データ | 実用条件での精度と性能 | 今後追加（データは非公開） |
 
 MVTec-4K は [HiAD](https://github.com/cnulab/HiAD) による高解像度派生データセットで、実際の4Kセンサー画像だけからなるデータセットではありません。**4Kの画像を256pxに縮小して得た結果は、4K入力での異常検知性能ではありません。** 処理前とモデル入力時の解像度、および縮小/タイル方式を必ず明記します。
@@ -103,6 +103,6 @@ GitHub Actions（`.github/workflows/ci.yml`）は push と pull_request で、Py
 
 ## ライセンス
 
-このリポジトリのコードは [MIT](LICENSE) です。画像データおよび事前学習済み重みのライセンスは別です。MVTec AD は非商用の CC BY-NC-SA 4.0。MVTec-4K 配布ページには Apache-2.0 表記がありますが、MVTec AD の派生物なので本リポジトリでは非商用・継承条件が及ぶものとして扱います（[詳細](docs/mvtec4k.md#ライセンスと制限事項)）。データと重みはGit管理しません。
+このリポジトリのコードは [MIT](LICENSE) です。画像データおよび事前学習済み重みのライセンスは別です。MVTec AD は非商用の CC BY-NC-SA 4.0。MVTec AD 2 も CC BY-NC-SA 4.0、VisA は CC BY 4.0 です。MVTec-4K 配布ページには Apache-2.0 表記がありますが、MVTec AD の派生物なので本リポジトリでは非商用・継承条件が及ぶものとして扱います（[詳細](docs/mvtec4k.md#ライセンスと制限事項)）。データと重みはGit管理しません。
 
 参考：[Anomalib](https://github.com/open-edge-platform/anomalib) / [Anomalib公式ドキュメント](https://anomalib.readthedocs.io/en/latest/) / [HiAD](https://github.com/cnulab/HiAD)

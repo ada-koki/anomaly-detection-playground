@@ -75,6 +75,9 @@ MVTec AD など実データを使う学習・評価は CI では実行しない�
 - **MVTec-4K**: 配布ページ・HiAD リポジトリは Apache-2.0 表記だが、画像は MVTec AD を
   StableSR（S-Lab License 1.0、非商用）で超解像した派生物。本リポジトリでは MVTec AD の
   非商用・継承条件が及ぶものとして扱い、再配布しない（`docs/mvtec4k.md`）。
+- **MVTec AD 2**: CC BY-NC-SA 4.0（**非商用**、表示、継承）。配布物の `license.txt` で確認。
+  論文引用は Heckler-Kram et al., arXiv:2503.21622。再配布せず Git 管理しない（`docs/verification/issue16_datasets.md`）。
+- **VisA**: CC BY 4.0（表示）。商用利用は可能だが、本リポジトリでは画像・マスクを再配布せず Git 管理しない。
 - **torchvision / timm の事前学習済み重み**: 重みごとにモデルカードがあり、学習に
   使われたデータ（ImageNet など）の利用条件も関係する。重みの再配布可否と、
   学習データ側の条件を分けて確認する。
