@@ -20,6 +20,7 @@ _ALLOWED_DATASETS = {"mvtec_ad", "mvtec_4k"}
 # val_split_mode=none は PostProcessor の正規化パラメータが NaN になり
 # engine.test のメトリクスが信頼できないため、許可しない（Issue #7）。
 _ALLOWED_VAL_SPLIT_MODES = {"same_as_test", "from_test"}
+_ALLOWED_EFFICIENTAD_MODEL_SIZES = {"small", "medium"}
 _TOP_LEVEL_FIELDS = {
     "protocol_name",
     "protocol_version",
@@ -34,12 +35,18 @@ _TOP_LEVEL_FIELDS = {
     "cpu_threads",
     "models",
 }
-_MODEL_FIELDS = {
+_BASE_MODEL_FIELDS = {
     "backbone",
     "layers",
     "coreset_sampling_ratio",
     "num_neighbors",
 }
+_EFFICIENTAD_MODEL_FIELDS = {
+    "model_size",
+    "max_epochs",
+    "max_steps",
+}
+_MODEL_FIELDS = _BASE_MODEL_FIELDS | _EFFICIENTAD_MODEL_FIELDS
 
 VAL_SPLIT_MODE_NONE_REASON = (
     "val_split_mode=none は使用できません。AnomalibのPostProcessorは検証集合から"
@@ -61,6 +68,9 @@ class ModelConfig:
     layers: tuple[str, ...] | None = None
     coreset_sampling_ratio: float | None = None
     num_neighbors: int | None = None
+    model_size: str | None = None
+    max_epochs: int | None = None
+    max_steps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +117,9 @@ def _expect_number(value: Any, where: str) -> float:
 
 def _model_config_from_dict(model_name: str, value: Any) -> ModelConfig:
     raw = _expect_mapping(value, f"models.{model_name}")
-    unknown = set(raw) - _MODEL_FIELDS
+    is_efficient_ad = model_name == "efficient_ad"
+    allowed_fields = _MODEL_FIELDS if is_efficient_ad else _BASE_MODEL_FIELDS
+    unknown = set(raw) - allowed_fields
     if unknown:
         joined = ", ".join(sorted(unknown))
         raise ProtocolError(f"models.{model_name} に未知のキーがあります: {joined}")
@@ -154,11 +166,51 @@ def _model_config_from_dict(model_name: str, value: Any) -> ModelConfig:
                 f"models.{model_name}.num_neighbors には1以上を指定してください"
             )
 
+    model_size: str | None = None
+    max_epochs: int | None = None
+    max_steps: int | None = None
+    if is_efficient_ad:
+        model_size_value = raw.get("model_size")
+        if model_size_value is not None:
+            model_size = _expect_str(
+                model_size_value, f"models.{model_name}.model_size"
+            ).lower()
+            if model_size not in _ALLOWED_EFFICIENTAD_MODEL_SIZES:
+                raise ProtocolError(
+                    f"models.{model_name}.model_size は "
+                    f"{sorted(_ALLOWED_EFFICIENTAD_MODEL_SIZES)} のいずれかを"
+                    "指定してください"
+                )
+
+        max_epochs_value = raw.get("max_epochs")
+        if max_epochs_value is not None:
+            max_epochs = _expect_int(
+                max_epochs_value, f"models.{model_name}.max_epochs"
+            )
+            if max_epochs < 1:
+                raise ProtocolError(
+                    f"models.{model_name}.max_epochs には1以上を指定してください"
+                )
+
+        max_steps_value = raw.get("max_steps")
+        if max_steps_value is not None:
+            max_steps = _expect_int(
+                max_steps_value, f"models.{model_name}.max_steps"
+            )
+            if max_steps == 0 or max_steps < -1:
+                raise ProtocolError(
+                    f"models.{model_name}.max_steps には -1（無制限）または"
+                    "1以上を指定してください"
+                )
+
     return ModelConfig(
         backbone=backbone,
         layers=layers,
         coreset_sampling_ratio=coreset_sampling_ratio,
         num_neighbors=num_neighbors,
+        model_size=model_size,
+        max_epochs=max_epochs,
+        max_steps=max_steps,
     )
 
 
@@ -286,6 +338,12 @@ def _model_config_to_dict(model_config: ModelConfig) -> dict[str, Any]:
         result["coreset_sampling_ratio"] = model_config.coreset_sampling_ratio
     if model_config.num_neighbors is not None:
         result["num_neighbors"] = model_config.num_neighbors
+    if model_config.model_size is not None:
+        result["model_size"] = model_config.model_size
+    if model_config.max_epochs is not None:
+        result["max_epochs"] = model_config.max_epochs
+    if model_config.max_steps is not None:
+        result["max_steps"] = model_config.max_steps
     return result
 
 
