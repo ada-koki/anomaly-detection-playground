@@ -41,6 +41,7 @@ RUN_COLUMNS = [
     "e2e_p95_ms",
     "model_p50_ms",
     "model_p95_ms",
+    "latency_valid",
     "train_peak_rss_mib",
     "process_peak_rss_mib",
     "protocol_name",
@@ -66,6 +67,8 @@ NUMERIC_COLUMNS = [
     "process_peak_rss_mib",
 ]
 
+LATENCY_COLUMNS = {"e2e_p50_ms", "e2e_p95_ms", "model_p50_ms", "model_p95_ms"}
+
 SUMMARY_COLUMNS = [
     "model",
     "category",
@@ -76,6 +79,8 @@ SUMMARY_COLUMNS = [
     "n_runs",
     "n_ok",
     "n_failed",
+    "n_latency_invalid",
+    "n_latency_unjudged",
     "manifest_consistent",
 ]
 for _column in NUMERIC_COLUMNS:
@@ -148,6 +153,10 @@ def extract_metrics(
             "process_peak_rss_mib",
             memory.get("process_lifetime_peak_rss_mib"),
         )
+
+    latency_valid = report.get("latency_valid")
+    if isinstance(latency_valid, bool):
+        metrics["latency_valid"] = latency_valid
 
     protocol_name = _get(report, "protocol", "name")
     if isinstance(protocol_name, str) and protocol_name:
@@ -269,6 +278,13 @@ def summarize_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         variant,
     ), group in groups.items():
         ok_rows = [row for row in group if row.get("status") == "ok"]
+        n_latency_invalid = sum(
+            1 for row in ok_rows if row.get("latency_valid") is False
+        )
+        n_latency_unjudged = sum(
+            1 for row in ok_rows if row.get("latency_valid") is None
+        )
+
         item: dict[str, Any] = {
             "model": model,
             "category": category,
@@ -279,6 +295,8 @@ def summarize_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
             "n_runs": len(group),
             "n_ok": len(ok_rows),
             "n_failed": len(group) - len(ok_rows),
+            "n_latency_invalid": n_latency_invalid,
+            "n_latency_unjudged": n_latency_unjudged,
         }
 
         manifest_values = {
@@ -290,9 +308,17 @@ def summarize_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         item["manifest_consistent"] = len(manifest_values) <= 1
 
         for column in NUMERIC_COLUMNS:
+            if column in LATENCY_COLUMNS:
+                source_rows = [
+                    row
+                    for row in ok_rows
+                    if row.get("latency_valid") is not False
+                ]
+            else:
+                source_rows = ok_rows
             values = [
                 float(row[column])
-                for row in ok_rows
+                for row in source_rows
                 if _is_finite_number(row.get(column))
             ]
             if values:
@@ -506,12 +532,13 @@ def render_report_md(
             lines.append(f"#### 実行モード: {_md_cell(mode)}")
             lines.append("")
             lines.append(
-                "| 条件 | モデル | n_ok/n_runs | Image AUROC engine | "
-                "Image AUROC raw | Pixel AUROC engine | Pixel AUROC raw | "
-                "学習時間 s | e2e P50 ms | e2e P95 ms | ピーク RSS MiB |"
+                "| 条件 | モデル | n_ok/n_runs | レイテンシ無効/未判定 | "
+                "Image AUROC engine | Image AUROC raw | Pixel AUROC engine | "
+                "Pixel AUROC raw | 学習時間 s | e2e P50 ms | e2e P95 ms | "
+                "ピーク RSS MiB |"
             )
             lines.append(
-                "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+                "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
             )
             for image_size, cpu_threads in conditions:
                 for model in models:
@@ -527,6 +554,7 @@ def render_report_md(
                         f"s{image_size} / t{cpu_threads}",
                         model,
                         f"{n_ok}/{n_runs}",
+                        _latency_count_cell(summary_row),
                         _mean_std_cell(summary_row, "image_AUROC"),
                         _mean_std_cell(summary_row, "image_AUROC_raw"),
                         _mean_std_cell(summary_row, "pixel_AUROC"),
@@ -586,6 +614,11 @@ def render_report_md(
     )
     lines.append(
         "- repeat は同一 seed で実行しており、モデル条件の違いではなく計測ばらつきの評価です。"
+    )
+    lines.append(
+        "- latency_valid=false の run はレイテンシ列の要約から除外しています。"
+        "未判定（干渉指標が取れない環境・旧 report）は要約に含めますが、"
+        "比較表の「レイテンシ無効/未判定」列に件数を示しています。"
     )
     lines.append("")
     return "\n".join(lines)
@@ -730,6 +763,19 @@ def _mean_std_cell(
     if std is None:
         return mean_text
     return f"{mean_text} ± {_format_number(std, digits)}"
+
+
+def _latency_count_cell(summary_row: Mapping[str, Any] | None) -> str:
+    """比較表用の「レイテンシ無効/未判定」件数セル。"""
+    if not isinstance(summary_row, Mapping):
+        return "—"
+    invalid = summary_row.get("n_latency_invalid")
+    unjudged = summary_row.get("n_latency_unjudged")
+    if invalid is None and unjudged is None:
+        return "—"
+    invalid_text = str(invalid) if invalid is not None else "—"
+    unjudged_text = str(unjudged) if unjudged is not None else "—"
+    return f"{invalid_text}/{unjudged_text}"
 
 
 def _md_cell(value: Any) -> str:

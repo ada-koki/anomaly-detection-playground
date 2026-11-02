@@ -1,0 +1,7 @@
+condition,cpu_load_procs,max_retries,attempt,adopted,attempt_latency_valid,run_latency_valid,other_busy_cores_mean,other_busy_cores_p95,self_busy_cores_mean,psi_cpu_some_ratio_mean,n_windows,adopted_model_p50_ms,adopted_model_p95_ms,adopted_e2e_p50_ms,adopted_e2e_p95_ms,image_auroc_engine,train_stage_s,run_id
+bottle_padim_clean_a,0,1,0,True,True,True,0.192,0.516,4.287,0.066,6,20.4,29.3,39.0,52.5,0.996324,11.737,20261031T191521Z-a6e33a32
+bottle_padim_clean_b,0,1,0,True,True,True,0.103,0.296,4.227,0.063,6,25.1,33.2,44.6,52.5,0.996324,18.697,20261031T193404Z-e6decc7a
+bottle_padim_load4,4,0,0,True,False,False,4.032,4.295,3.852,0.569,146,927.5,1082.9,1077.6,1234.2,0.996324,311.562,20261031T191559Z-3e69bf44
+bottle_padim_load8,8,0,0,True,False,False,4.733,5.403,3.102,0.766,88,31.5,1651.1,51.7,1930.5,0.996324,405.756,20261031T192403Z-54b218eb
+bottle_padim_load8_retry2,8,2,0,False,False,True,4.646,5.139,3.278,0.736,116,25.4,32.6,43.6,53.1,0.996324,407.522,20261031T193436Z-e7199e09
+bottle_padim_load8_retry2,8,2,1,True,True,True,0.138,0.277,4.126,0.057,6,25.4,32.6,43.6,53.1,0.996324,407.522,20261031T193436Z-e7199e09
