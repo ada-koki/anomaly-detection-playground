@@ -1,0 +1,3 @@
+stage,run_id,model,category,execution_mode,training_mode,train_device_observed,infer_device_observed,checkpoint_sha256,provenance_sha256_matches,train_stage_seconds,test_stage_seconds,image_AUROC_engine,pixel_AUROC_engine,image_AUROC_raw,pixel_AUROC_raw,e2e_p50_ms,e2e_p95_ms,process_peak_rss_mib,threads,image_size
+stage1,20261031T100003Z-8e8bdda0,padim,bottle,cpu_only,cpu_train_cpu_infer,cpu,cpu,20bf594d8b1436c33bd9fbb2f4cb0e81af6fab0382b3a956940284171daef01c,,15.085,4.12,0.996324,0.97676,0.997549,0.974881,48.25,57.92,1634.34,8,256
+stage2,20261031T100037Z-b120b558,padim,bottle,cpu_only,external_checkpoint_cpu_infer,,cpu,20bf594d8b1436c33bd9fbb2f4cb0e81af6fab0382b3a956940284171daef01c,True,,4.039,0.996324,0.97676,0.997549,0.974881,46.33,55.66,1101.6,8,256

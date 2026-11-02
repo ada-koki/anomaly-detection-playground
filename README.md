@@ -3,7 +3,7 @@
 `anomaly-detection-playground` は、産業用の**画像異常検知（Visual Anomaly Detection）**を、精度・学習時間・推論速度・メモリ効率の観点で比較する実験リポジトリです。特に**CPUだけで学習・推論できるか**と、**高解像度画像上の微小欠陥**を重視します。
 
 > [!IMPORTANT]
-> **初期ベースラインです。** Anomalib 2.7.0 の PaDiM / PatchCore を呼び出し、CPUの学習・テスト工程の時間・ピークRSSと精度指標をJSONに保存します。Linux（8 vCPU、GPUなし）上で MVTec AD の bottle / grid カテゴリを用いた CPU のみの学習・テスト完走を確認済みです（[検証記録](docs/verification/issue5_cpu_baseline.md)）。Windows は未検証です。EfficientAD は短縮条件（1 エポック）での CPU 学習・CPU 推論とチェックポイント推論を確認済みです（[検証記録](docs/verification/issue10_efficientad.md)、[使い方](docs/efficientad.md)）。タイル分割、ONNX Runtime / OpenVINO比較は今後追加します。
+> **初期ベースラインです。** Anomalib 2.7.0 の PaDiM / PatchCore を呼び出し、CPUの学習・テスト工程の時間・ピークRSSと精度指標をJSONに保存します。Linux（8 vCPU、GPUなし）上で MVTec AD の bottle / grid カテゴリを用いた CPU のみの学習・テスト完走を確認済みです（[検証記録](docs/verification/issue5_cpu_baseline.md)）。Windows は未検証です。EfficientAD は短縮条件（1 エポック）での CPU 学習・CPU 推論とチェックポイント推論を確認済みです（[検証記録](docs/verification/issue10_efficientad.md)、[使い方](docs/efficientad.md)）。学習/推論デバイスは観測値を report に記録し、`--save-checkpoint` / `--checkpoint` による二段実行（GPU 学習 + CPU 推論を想定）に対応しています。CPU での二段実行のみ確認済みで、GPU 経路は未検証です（[検証記録](docs/verification/issue11_device_modes.md)、[説明](docs/device_modes.md)）。タイル分割、ONNX Runtime / OpenVINO比較は今後追加します。
 
 ## 評価データセット
 
