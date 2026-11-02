@@ -1,0 +1,13 @@
+label,model,engine,threads,repeats,latency_samples,model_ms_p50,model_ms_p95,model_ms_mean,model_ms_std,load_seconds,latency_peak_rss_mib_sampled,process_peak_rss_mib,process_peak_rss_source,image_AUROC_raw,pixel_AUROC_raw,decision_agreement,score_max_abs_diff,map_max_abs_diff,map_p999_rel_diff,export_method,opset,model_size_bytes,export_seconds,run_id
+padim_t8,padim,torch,8,3,201,26.985,47.916,30.538,16.78,3.839,822.84,920.73,VmHWM(/proc/self/status),0.996324,0.976871,1.0,,,,,,,,20261031_213625
+padim_t8,padim,onnxruntime,8,3,201,13.542,19.535,14.095,3.901,0.084,346.4,379.16,VmHWM(/proc/self/status),0.996324,0.976871,1.0,0.000104,0.000259,6e-05,dynamo,18,176711168,1.849,20261031_213625
+padim_t8,padim,openvino,8,3,201,14.312,31.197,16.694,7.309,0.185,532.88,565.72,VmHWM(/proc/self/status),0.996324,0.976871,1.0,0.000275,0.000824,0.000112,dynamo,18,176724489,1.849,20261031_213625
+patchcore_t8,patchcore,torch,8,3,201,186.759,906.286,255.478,244.374,5.515,1092.31,1287.31,VmHWM(/proc/self/status),1.0,0.985522,1.0,,,,,,,,20261031_213700
+patchcore_t8,patchcore,onnxruntime,8,3,201,82.649,100.484,85.505,10.136,0.879,773.34,806.1,VmHWM(/proc/self/status),1.0,0.985522,1.0,0.000177,0.000809,3.7e-05,dynamo,18,231153221,3.613,20261031_213700
+patchcore_t8,patchcore,openvino,8,3,201,81.275,112.881,85.551,14.136,2.161,1180.34,1213.07,VmHWM(/proc/self/status),1.0,0.985522,1.0,0.000299,0.001853,8.5e-05,dynamo,18,231197127,3.613,20261031_213700
+padim_t1,padim,torch,1,1,67,59.838,63.388,60.149,1.81,3.63,822.71,920.61,VmHWM(/proc/self/status),0.996324,0.976871,1.0,,,,,,,,20261031_213859
+padim_t1,padim,onnxruntime,1,1,67,43.312,51.221,44.749,5.867,0.044,345.07,378.24,VmHWM(/proc/self/status),0.996324,0.976871,1.0,0.000104,0.000259,6e-05,dynamo,18,176711168,1.934,20261031_213859
+padim_t1,padim,openvino,1,1,67,52.022,58.044,52.794,2.586,0.25,531.1,563.75,VmHWM(/proc/self/status),0.996324,0.976871,1.0,0.000275,0.000824,0.000112,dynamo,18,176724489,1.934,20261031_213859
+patchcore_t1,patchcore,torch,1,1,67,691.93,876.424,717.979,65.185,4.824,1083.41,1287.11,VmHWM(/proc/self/status),1.0,0.985522,1.0,,,,,,,,20261031_213931
+patchcore_t1,patchcore,onnxruntime,1,1,67,558.09,611.63,572.895,63.83,0.937,772.77,805.79,VmHWM(/proc/self/status),1.0,0.985522,1.0,0.000177,0.000674,3.7e-05,dynamo,18,231153221,3.566,20261031_213931
+patchcore_t1,patchcore,openvino,1,1,67,545.028,601.215,553.248,24.567,2.626,1174.67,1207.94,VmHWM(/proc/self/status),1.0,0.985522,1.0,0.000299,0.001794,8.5e-05,dynamo,18,231197127,3.566,20261031_213931
