@@ -59,6 +59,7 @@ class TestParseEngines(unittest.TestCase):
             engines.parse_engines("torch,cuda")
 
 
+@unittest.skipUnless(_has("numpy"), "numpy が必要")
 class TestCompareOutputs(unittest.TestCase):
     def test_identical(self) -> None:
         import numpy as np
@@ -100,6 +101,7 @@ class TestCompareOutputs(unittest.TestCase):
             )
 
 
+@unittest.skipUnless(_has("numpy"), "numpy が必要")
 class TestDecisionAgreement(unittest.TestCase):
     def test_perfect(self) -> None:
         import numpy as np
