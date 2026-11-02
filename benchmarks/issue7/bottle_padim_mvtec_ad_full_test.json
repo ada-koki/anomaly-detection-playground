@@ -1,0 +1,279 @@
+{
+  "schema_version": 4,
+  "status": "ok",
+  "run_id": "20261031T074836Z-fb26824a",
+  "dataset": "mvtec_ad",
+  "dataset_root": "datasets/MVTecAD",
+  "category": "bottle",
+  "model": "padim",
+  "backbone": "resnet18",
+  "backbone_is_default": false,
+  "backbone_source": "protocol",
+  "layers": [
+    "layer1",
+    "layer2",
+    "layer3"
+  ],
+  "coreset_sampling_ratio": null,
+  "num_neighbors": null,
+  "prefetch_weights": false,
+  "manifest_only": false,
+  "device": "cpu",
+  "image_size": [
+    256,
+    256
+  ],
+  "image_handling": "whole_image_resized_not_tiled",
+  "train_batch_size": 1,
+  "eval_batch_size": 1,
+  "num_workers": 0,
+  "requested_cpu_threads": 8,
+  "torch_num_threads": 8,
+  "val_split": {
+    "mode": "same_as_test",
+    "fraction": null,
+    "seed": 42
+  },
+  "protocol": {
+    "name": "mvtec_ad_full_test",
+    "version": 1,
+    "config_path": "configs/protocols/mvtec_ad_full_test.json",
+    "sha256": "b65b3874c0a7256d0be5d846214b4b22465b024ea8b49510132e4a07e9f2f794",
+    "sha256_scope": "protocol_file_bytes",
+    "config": {
+      "protocol_name": "mvtec_ad_full_test",
+      "protocol_version": 1,
+      "dataset": "mvtec_ad",
+      "val_split_mode": "same_as_test",
+      "val_split_ratio": null,
+      "seed": 42,
+      "image_size": 256,
+      "train_batch_size": 1,
+      "eval_batch_size": 1,
+      "num_workers": 0,
+      "cpu_threads": 8,
+      "models": {
+        "padim": {
+          "backbone": "resnet18",
+          "layers": [
+            "layer1",
+            "layer2",
+            "layer3"
+          ]
+        },
+        "patchcore": {
+          "backbone": "wide_resnet50_2",
+          "layers": [
+            "layer2",
+            "layer3"
+          ],
+          "coreset_sampling_ratio": 0.1,
+          "num_neighbors": 9
+        }
+      }
+    },
+    "overrides": {
+      "cpu_threads": 8
+    }
+  },
+  "data_split": {
+    "roles": {
+      "train": {
+        "count": 209,
+        "label_counts": {
+          "good": 209
+        }
+      },
+      "val": {
+        "count": 83,
+        "label_counts": {
+          "broken_large": 20,
+          "broken_small": 22,
+          "contamination": 21,
+          "good": 20
+        }
+      },
+      "test": {
+        "count": 83,
+        "label_counts": {
+          "broken_large": 20,
+          "broken_small": 22,
+          "contamination": 21,
+          "good": 20
+        }
+      }
+    },
+    "overlap_detected": true,
+    "overlap_allowed": true,
+    "overlap_image_count": 83,
+    "overlap_reason": "val_split_mode=same_as_test では val が test の複製になるため、val と test が完全一致し、各画像が役割ごとに1回だけ現れる場合に限り重複を許容しています。閾値はテスト集合で調整されるため、閾値依存指標は楽観的な値になります。",
+    "manifest_sha256": "14058eb7ddc6482be168b520498507f5d12f5f82e846a088c319a1bc90ba766e",
+    "threshold_selection": {
+      "source": "test",
+      "val_split_mode": "same_as_test",
+      "val_split_ratio": null,
+      "uses_test_for_threshold": true,
+      "optimistic": true,
+      "threshold_dependent_metrics": "tuned_on_test_optimistic",
+      "note": "valはテスト集合の複製です。閾値依存指標（F1・FPR・FNRなど）はテスト集合で調整済み（楽観的）であり、他プロトコルとの比較に使わないでください。"
+    }
+  },
+  "randomness": {
+    "seed": 42,
+    "seed_everything_called": true,
+    "torch_manual_seed_called": true,
+    "torch_are_deterministic_algorithms_enabled": false,
+    "pythonhashseed_present": false,
+    "pythonhashseed_value": null,
+    "notes": "lightning.seed_everything(seed, workers=True) と torch.manual_seed(seed) を実行します。torch.are_deterministic_algorithms_enabled() は実行時点のPyTorch設定を記録したもので、本スクリプトが決定論的アルゴリズムを有効化したことを意味しません。PYTHONHASHSEED はプロセス開始時点の環境変数の有無と値を記録します。"
+  },
+  "latency_settings": {
+    "warmup": 5,
+    "max_images": 20,
+    "repeats": 1,
+    "skip_latency": false
+  },
+  "train_stage_seconds": 14.339,
+  "test_stage_seconds": 6.402,
+  "timing_notes": {
+    "train_stage_seconds": "engine.fit 全体の所要時間です。",
+    "test_stage_seconds": "engine.test 全体（テストデータ読み込み・評価指標計算を含む）の所要時間です。画像1枚あたりの推論時間ではなく、per_image_inference_latency.end_to_end_ms とは意味が異なるため混同しないでください。",
+    "per_image_inference_latency": "画像1枚ごとに decode / preprocess / model / postprocess / end_to_end をtime.perf_counter で計測した結果です。ウォームアップ画像は集計から除外します。"
+  },
+  "memory": {
+    "train_peak_rss_mib_sampled": 1870.61,
+    "test_peak_rss_mib_sampled": 939.11,
+    "latency_peak_rss_mib_sampled": 817.71,
+    "process_lifetime_peak_rss_mib": 1870.61,
+    "sampling_interval_s": 0.05,
+    "notes": "RSSはpsutilでプロセスツリーをサンプリングした推定値です。サンプリング間隔より短いピークは取り逃す可能性があります。process_lifetime_peak_rss_mib は resource.getrusage(RUSAGE_SELF).ru_maxrss に基づく自プロセス生涯最大RSSであり、学習・テスト・推論などの工程別の値ではありません。num_workers=0 の場合、通常はデータ読み込み用の子プロセスは発生しません。",
+    "raw_eval_peak_rss_mib_sampled": 1188.32
+  },
+  "train_peak_host_rss_mib_sampled": 1870.61,
+  "test_peak_host_rss_mib_sampled": 939.11,
+  "test_metrics": [
+    {
+      "image_AUROC": 0.997619092464447,
+      "image_F1Score": 0.9838709831237793,
+      "pixel_AUROC": 0.9776500463485718,
+      "pixel_F1Score": 0.6676576137542725
+    }
+  ],
+  "per_image_inference_latency": {
+    "model_class": "Padim",
+    "torch_num_threads": 8,
+    "batch_size": 1,
+    "input_resolution": [
+      256,
+      256
+    ],
+    "warmup_requested": 5,
+    "warmup_images": 5,
+    "warmup_excluded_from_summary": true,
+    "max_images": 20,
+    "measured_images": 20,
+    "repeats": 1,
+    "latency_samples": 20,
+    "sampling_interval_s": 0.05,
+    "latency_peak_rss_mib_sampled": 817.71,
+    "decode_ms": {
+      "count": 20,
+      "mean": 21.2690270942403,
+      "std": 5.992173086975133,
+      "min": 16.531897999811918,
+      "p50": 18.29653701861389,
+      "p95": 33.17918005341198,
+      "max": 39.343047013971955
+    },
+    "preprocess_ms": {
+      "count": 20,
+      "mean": 2.567710287985392,
+      "std": 5.162983453930235,
+      "min": 0.3861569566652179,
+      "p50": 0.42139101424254477,
+      "p95": 11.44614864606411,
+      "max": 20.49306797562167
+    },
+    "model_ms": {
+      "count": 20,
+      "mean": 33.10972644248977,
+      "std": 12.993981455337115,
+      "min": 21.783084026537836,
+      "p50": 28.704069001832977,
+      "p95": 55.885516581474825,
+      "max": 80.04911994794384
+    },
+    "postprocess_ms": {
+      "count": 20,
+      "mean": 0.3832850430626422,
+      "std": 0.04955047081307219,
+      "min": 0.3464299952611327,
+      "p50": 0.3714074846357107,
+      "p95": 0.42660097242333006,
+      "max": 0.5794370081275702
+    },
+    "end_to_end_ms": {
+      "count": 20,
+      "mean": 57.33426290098578,
+      "std": 17.784064132666927,
+      "min": 40.92471499461681,
+      "p50": 49.290567490970716,
+      "p95": 102.54195426532533,
+      "max": 105.4552859859541
+    },
+    "notes": "decode は read_image のみ、preprocess はバッチ次元付与と pre_processor（画像テンソルを入力）、model は model.model に前処理済みテンソルを渡す時間です。postprocess は post_processor の時間です。end_to_end は decode から postprocess までの合計です。ウォームアップ画像は集計から除外しています。RSSはサンプリングに基づく推定値で、サンプリング間隔より短いピークは取り逃す可能性があります。"
+  },
+  "host": {
+    "os": "Linux-6.12.94+-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "processor": ""
+  },
+  "cpu_logical_cores": 8,
+  "versions": {
+    "python": "3.13.5",
+    "torch": "2.15.0+cpu",
+    "torchvision": "0.29.2+cpu",
+    "anomalib": "2.7.0",
+    "lightning": "2.6.6",
+    "timm": "1.0.30",
+    "numpy": "2.5.4"
+  },
+  "argv": [
+    "--protocol",
+    "configs/protocols/mvtec_ad_full_test.json",
+    "--dataset-root",
+    "../datasets/MVTecAD",
+    "--category",
+    "bottle",
+    "--model",
+    "padim",
+    "--cpu-threads",
+    "8",
+    "--latency-max-images",
+    "20",
+    "--output-dir",
+    "../results/i7"
+  ],
+  "command": "python scripts/run_anomalib.py --protocol configs/protocols/mvtec_ad_full_test.json --dataset-root ../datasets/MVTecAD --category bottle --model padim --cpu-threads 8 --latency-max-images 20 --output-dir ../results/i7",
+  "raw_score_metrics": {
+    "image_AUROC_raw": 0.998413,
+    "pixel_AUROC_raw": 0.975692,
+    "image_count": 83,
+    "image_positive_count": 63,
+    "image_negative_count": 20,
+    "pixel_count": 5439488,
+    "positive_pixel_count": 314384,
+    "tied_image_scores": 0,
+    "nan_image_scores": 0,
+    "image_score_min": 18.060062408447266,
+    "image_score_max": 279.4498596191406,
+    "anomaly_map_size": [
+      256,
+      256
+    ],
+    "device": "cpu",
+    "normalization": "none(post_processor を通さない生スコア)",
+    "notes": "post_processorによる正規化を通さない生のpred_score/anomaly_mapで計算しています。 pixel AUROCのマスクはanomaly_mapの空間サイズへ最近傍リサイズし、正常画像はゼロマスクとしています。 画素は全画像分を連結して1回だけAUROCを計算しています。",
+    "elapsed_seconds": 9.096
+  }
+}

@@ -54,6 +54,17 @@ python scripts/run_anomalib.py --dataset mvtec_4k --category bottle --model patc
 
 `--device cpu` を明示すると学習・評価の両方でCPUを使います。参考として `--device cuda` でも実行できます。`--cpu-threads 8`、`--num-workers 0`、`--train-batch-size 1`、`--eval-batch-size 1` 等で条件を固定できます。
 
+## 標準プロトコル（再現性）
+
+実験条件は `configs/protocols/*.json` で固定します。既定は `mvtec_ad_v1`（公式 test から seed=42 で 20% を閾値調整用 val に分け、残りで評価）です。論文値との比較には `--protocol configs/protocols/mvtec_ad_full_test.json`（test 全数、閾値は test で調整されるため F1 等は比較に使わない）を使います。CLI で明示した引数だけがプロトコルを上書きし、上書き内容は `report.json` の `protocol.overrides` に残ります。
+
+```bash
+# 学習せずにデータ分割だけを確認（results/<run-id>/manifest.json を保存）
+python scripts/run_anomalib.py --category bottle --model padim --manifest-only
+```
+
+`report.json` の `data_split.manifest_sha256` が同じなら、train/val/test の画像構成は同一です。AUROC は Anomalib の `engine.test` の値に加え、正規化を通さない生スコアから計算した `raw_score_metrics` も記録します（`--skip-raw-eval` で省略）。
+
 ## 現状の出力
 
 `results/<run-id>/report.json` に次の値を記録します。
