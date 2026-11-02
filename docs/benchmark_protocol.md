@@ -107,7 +107,8 @@ Anomalibの `ValSplitMode.FROM_TEST` は `label_aware=True` で分割します�
 
 `engine.test` のメトリクスは、PostProcessorが検証集合から求めた正規化パラメータと閾値を経由します。同じ学習済みモデルでも正規化の影響で値が変わり得るため、`scripts/run_anomalib.py` はtest後に生スコア評価を実行し、`report.json` の `raw_score_metrics` に保存します（`adbench/raw_eval.py`）。
 
-- test集合の全画像を1枚ずつ（`read_image` → `pre_processor` → `model.model`、`torch.inference_mode()`）処理し、PostProcessorを通さない生の `pred_score` と `anomaly_map` を得ます。
+- test集合の全画像を1枚ずつ（`read_image` → `pre_processor.transform` → `model.model`、`torch.inference_mode()`）処理し、PostProcessorを通さない生の `pred_score` と `anomaly_map` を得ます。
+- 前処理は `engine.test` と同じ `pre_processor.transform`（`Resize` の antialias 有効）を使います（`adbench/preprocess.py`、`raw_score_metrics.preprocess` に記録）。Anomalib 2.7.0 の `PreProcessor.forward()` はONNX互換のため antialias を無効化した `export_transform` を使うので、直接呼ぶと `engine.test` と別条件になります。Issue #12 以前の実装は `forward()` を使っていたため、それ以前の `raw_score_metrics` は antialias 無効の条件です（`docs/verification/issue12_mvtec4k.md`）。
 - `image_AUROC_raw`：gt_label（`label_index`）に対するimage AUROC。
 - `pixel_AUROC_raw`：mask（`anomaly_map` の空間サイズへ最近傍リサイズ、正常画像はゼロマスク）に対するpixel AUROC。メモリ節約のため、全画像分のuint8マスクとfloat32マップを連結して1回だけ計算します。
 - `image_count` / `pixel_count` / `positive_pixel_count`：処理件数。想定（256px×100枚相当）を超えた場合はエラーにせず、件数を `notes` に記録します。
@@ -116,7 +117,7 @@ Anomalibの `ValSplitMode.FROM_TEST` は `label_aware=True` で分割します�
 
 `--skip-raw-eval` で省略できます。省略・失敗時はその旨を `raw_score_metrics` に記録します。
 
-**AUROCの主指標は `raw_score_metrics` と `engine.test`（`test_metrics`）の両方を記録し、両者に差がある場合は `raw_score_metrics` を正とします。** 正規化は検証集合のスコア範囲に依存し、範囲外のスコアが0/1に飽和すると同値が生じてAUROCが変化し得るためです。
+**AUROCは `raw_score_metrics` と `engine.test`（`test_metrics`）の両方を記録します。** 前処理を揃えた後（Issue #12 以降）は、両者に差がある場合は正規化（検証集合のスコア範囲外が0/1に飽和して同値が生じる等）の影響を疑い、`raw_score_metrics` を正とします。前処理が揃っていない Issue #12 以前の結果では、差の一部は前処理（antialias の有無）によるものです。
 
 ## 画像1枚あたりの推論レイテンシ計測
 
@@ -133,12 +134,12 @@ Anomalibの `ValSplitMode.FROM_TEST` は `label_aware=True` で分割します�
 | キー | 範囲 |
 | --- | --- |
 | `decode_ms` | 画像ファイルの読み込みとテンソル化（`read_image`） |
-| `preprocess_ms` | バッチ次元の付与と `pre_processor` の実行 |
+| `preprocess_ms` | バッチ次元の付与と前処理変換の実行（既定は `pre_processor.transform`。`--latency-preprocess export_transform` で `PreProcessor.forward()` 相当） |
 | `model_ms` | `model.model` の実行 |
 | `postprocess_ms` | `post_processor` の実行 |
 | `end_to_end_ms` | `decode_ms` から `postprocess_ms` までの合計 |
 
-各段について件数・平均・標準偏差・最小値・P50・P95・最大値を `per_image_inference_latency` に保存します。計測時の `torch.get_num_threads()`、バッチサイズ、入力解像度、計測中のサンプリングRSSピークも記録します。
+各段について件数・平均・標準偏差・最小値・P50・P95・最大値を `per_image_inference_latency` に保存します。計測時の `torch.get_num_threads()`、バッチサイズ、入力解像度、計測中のサンプリングRSSピーク、使った前処理（`preprocess.mode` / `preprocess.transform`）も記録します。Issue #12 以前のレイテンシは `export_transform`（antialias 無効）条件の値です。
 
 ## メモリ計測の方法と限界
 
@@ -152,10 +153,10 @@ Anomalibの `ValSplitMode.FROM_TEST` は `label_aware=True` で分割します�
 
 - `test_stage_seconds` は `engine.test` 全体（テストデータ読み込み・評価指標計算を含む）の時間です。**画像1枚あたりの推論時間ではありません。** 画像1枚の値は `per_image_inference_latency` を参照してください。
 - 画像1枚あたりの計測は、1プロセス・バッチサイズ1・指定スレッド数での値です。前処理や後処理の実装、入力解像度、モデルによって結果は変わります。
-- MVTec-4KはMVTec ADに似たディレクトリ構成なので同じ `MVTecAD` データモジュールを試す段階です。ラベルと全カテゴリの整合性は未検証です。
+- MVTec-4K は生配置に `foreground/` があり、Anomalib の `MVTecAD` にそのまま渡せません。`scripts/validate_mvtec4k.py --make-view` で作る clean view を使います（`docs/mvtec4k.md`）。整合検証は bottle のみ実施済みで、他の 6 カテゴリは未検証です。
 - PaDiM/PatchCoreで入力4096pxを指定するとメモリ不足の可能性があります。**4Kのネイティブ入力対応は未保証です。**
 - CPU での `fit` / `test` は PaDiM（bottle, grid）と PatchCore（bottle）で実機完走を確認済みです（256px, `docs/verification/` 参照）。その他のカテゴリ・4K条件での CPU 実行は未検証です。
-- `raw_score_metrics` は PostProcessor を通さない検証用の値です。実機確認は PaDiM・MVTec AD bottle・256px の条件に限られ、他のカテゴリ・モデル・解像度では未検証です。
+- `raw_score_metrics` は PostProcessor を通さない検証用の値です。前処理を揃えた後の実機確認は PaDiM（MVTec AD bottle と MVTec-4K bottle）と PatchCore（MVTec-4K bottle）の 256px に限られ、他のカテゴリ・モデル・解像度では未検証です。
 - `val_split_mode: none` の拒否と `same_as_test` の重複許容は、コード上のテストで確認していますが、`PatchCore` など他モデルでの `same_as_test` 実行は未検証です。
 
 ## 参考資料

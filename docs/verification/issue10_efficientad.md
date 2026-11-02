@@ -46,6 +46,7 @@ python scripts/run_anomalib.py --model efficient_ad \
 - `s/step` は `train_stage_seconds / trained_steps` の計算値です。`engine.fit` には教師特徴の平均・分散計算（学習画像 209 枚の順伝播）が含まれるため、純粋な 1 ステップの時間ではありません。
 - 学習時間は 2 回で約 12% 異なりました。共有 VM のため他プロセスの負荷は統制していません。ckpt 推論のレイテンシが学習ランより約 2 割大きい点も、同じ要因の可能性があり、原因は未検証です。
 - engine の Image AUROC（正規化後スコア）と raw（post_processor を通さない生スコアを sklearn で計算）が 0.9596 と 0.9694 で異なります。原因は未検証です（正規化後のクリップで同点が生じる可能性があります）。
+  - 追記（Issue #12）: 当時の生スコア評価は `PreProcessor.forward()`（antialias 無効の `export_transform`）を使っており、`engine.test`（antialias 有効の `transform`）と前処理が異なっていました。この差が原因の一部である可能性がありますが、EfficientAD での再計測は未実施です（`docs/verification/issue12_mvtec4k.md`）。
 
 ## 解釈上の注意
 

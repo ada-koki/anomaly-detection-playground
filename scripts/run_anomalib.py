@@ -40,12 +40,14 @@ from adbench.devices import (
     write_provenance,
 )
 from adbench.latency import measure_per_image_latency
+from adbench.preprocess import DEFAULT_PREPROCESS_MODE, PREPROCESS_MODES
 from adbench.manifest import (
     build_data_split_report,
     collect_manifest_rows,
     write_manifest,
 )
 from adbench.memory import DEFAULT_SAMPLING_INTERVAL_S, peak_rss_lifetime_mib, sampled_rss
+from adbench.mvtec4k import build_resolution_condition, has_foreground_dir
 from adbench.protocol import (
     DEFAULT_PROTOCOL_PATH,
     ModelConfig,
@@ -230,6 +232,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="レイテンシ計測に使う最大画像数。0はテスト画像全体",
+    )
+    parser.add_argument(
+        "--latency-preprocess",
+        choices=PREPROCESS_MODES,
+        default=DEFAULT_PREPROCESS_MODE,
+        help=(
+            "レイテンシ計測の前処理。eval_transform は engine.test と同じ（antialias 有効）、"
+            "export_transform は PreProcessor.forward() と同じ（antialias 無効、ONNX 出力相当）"
+        ),
     )
     parser.add_argument(
         "--latency-repeats",
@@ -496,6 +507,14 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
             parser.error(
                 f"{root / args.category} に train/good または test/good が見つかりません。"
                 "READMEを参照してデータセットをダウンロード・展開してください。"
+            )
+        if args.dataset == "mvtec_4k" and has_foreground_dir(root, args.category):
+            parser.error(
+                "MVTec-4K の生配置には foreground/ があり、Anomalib 2.7 の "
+                "MVTecAD は foreground 配下の画像を train/test の重複行として"
+                "取り込みます。scripts/validate_mvtec4k.py --make-view OUTPUT で"
+                "clean view を作成し、--dataset-root にそのディレクトリを指定して"
+                "ください。"
             )
     return root
 
@@ -1350,6 +1369,7 @@ def _run_stages(
             warmup=args.latency_warmup,
             max_images=(None if args.latency_max_images == 0 else args.latency_max_images),
             repeats=args.latency_repeats,
+            preprocess_mode=args.latency_preprocess,
         )
         report["per_image_inference_latency"] = latency_result
         memory["latency_peak_rss_mib_sampled"] = latency_result[
@@ -1380,6 +1400,12 @@ def main(argv: list[str] | None = None) -> int:
     protocol_report = _build_protocol_report(protocol, protocol_path, overrides)
     report = build_base_report(args, root, run_id, argv_list, protocol_report)
     report["training_mode"] = determine_training_mode(args.checkpoint)
+    # 元画像解像度とモデル入力解像度は別条件であるため、レポートで区別できるようにする。
+    report["resolution_condition"] = build_resolution_condition(
+        root,
+        args.category,
+        args.image_size,
+    )
     if args.checkpoint is not None:
         report["checkpoint_sha256"] = _sha256_file(args.checkpoint)
         report["train_stage_seconds"] = None
