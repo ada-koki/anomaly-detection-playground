@@ -99,6 +99,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     parser.add_argument("--image-size", type=int, default=None)
+    parser.add_argument(
+        "--tile-size",
+        type=int,
+        default=None,
+        help="指定するとタイル推論を有効化（PaDiM/PatchCore のみ）。--image-size が作業解像度",
+    )
+    parser.add_argument(
+        "--tile-stride",
+        type=int,
+        default=None,
+        help="タイルのストライド。省略時は --tile-size と同じ（重なりなし）",
+    )
+    parser.add_argument(
+        "--tile-mode",
+        choices=("padding", "interpolation"),
+        default="padding",
+        help="Anomalib Tiler の拡張モード。パディング不要構成のみ許可するため通常は結果に影響しない",
+    )
     parser.add_argument("--train-batch-size", type=int, default=None)
     parser.add_argument("--eval-batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
@@ -398,6 +416,77 @@ def parse_and_resolve(
     return args, protocol, protocol_path, overrides
 
 
+def build_tiling_config(args: argparse.Namespace) -> Any:
+    """CLI 引数から TilingConfig を作る。タイル無効なら None。"""
+    from adbench.tiling import TilingConfig
+
+    tile_size = getattr(args, "tile_size", None)
+    if tile_size is None:
+        return None
+    stride = getattr(args, "tile_stride", None)
+    # Anomalib の Tiler は stride=None で内部属性が未定義になるため、常に明示する。
+    return TilingConfig(
+        tile_size=tile_size,
+        stride=tile_size if stride is None else stride,
+        mode=getattr(args, "tile_mode", "padding"),
+    )
+
+
+def _validate_tiling_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    from adbench.tiling import validate_for_model
+
+    if getattr(args, "tile_size", None) is None:
+        if getattr(args, "tile_stride", None) is not None:
+            parser.error("--tile-stride は --tile-size と一緒に指定してください")
+        return
+    if args.model == "efficient_ad":
+        parser.error(
+            "EfficientAD の torch model には tiler 属性が無いため、タイル推論は "
+            "PaDiM/PatchCore のみ対応です"
+        )
+    config = build_tiling_config(args)
+    try:
+        config.validate()
+    except ValueError as error:
+        parser.error(f"タイル設定が不正です: {error}")
+    errors = validate_for_model(args.image_size, config)
+    if errors:
+        parser.error("タイル設定が不正です: " + " / ".join(errors))
+
+
+def describe_spatial_strategy(args: argparse.Namespace) -> dict[str, Any]:
+    """全体縮小とタイル推論を区別して report に保存するための記述。"""
+    from adbench.tiling import describe_global, describe_tiling
+
+    config = build_tiling_config(args)
+    if config is None:
+        return describe_global(args.image_size)
+    return describe_tiling(args.image_size, config)
+
+
+def _attach_tiler(model: Any, args: argparse.Namespace) -> None:
+    """TilerConfigurationCallback.setup と同じく model.model.tiler を設定する。
+
+    チェックポイント読み込み後も確実に有効になるよう、コールバックではなく
+    モデル生成直後に直接設定する。
+    """
+    config = build_tiling_config(args)
+    if config is None:
+        return
+    from anomalib.data.utils.tiler import ImageUpscaleMode, Tiler
+
+    torch_model = getattr(model, "model", None)
+    if torch_model is None or not hasattr(torch_model, "tiler"):
+        msg = f"{type(model).__name__} はタイル推論（tiler 属性）に対応していません"
+        raise ValueError(msg)
+    torch_model.tiler = Tiler(
+        tile_size=config.tile_size,
+        stride=config.stride,
+        remove_border_count=config.remove_border_count,
+        mode=ImageUpscaleMode(config.mode),
+    )
+
+
 def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
     max_epochs_cli = getattr(args, "max_epochs_cli", None)
     max_steps_cli = getattr(args, "max_steps_cli", None)
@@ -461,6 +550,7 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     for key in ("image_size", "train_batch_size", "eval_batch_size"):
         if getattr(args, key) < 1:
             parser.error(f"--{key.replace('_', '-')} には1以上を指定してください")
+    _validate_tiling_args(args, parser)
     if args.num_workers < 0 or args.cpu_threads < 0:
         parser.error("--num-workers と --cpu-threads には0以上を指定してください")
     if args.val_split_mode == "none":
@@ -1153,6 +1243,7 @@ def _run_stages(
         )
     else:
         model = _create_model(args)
+    _attach_tiler(model, args)
 
     if args.prefetch_weights:
         if args.model == "efficient_ad":
@@ -1406,6 +1497,7 @@ def main(argv: list[str] | None = None) -> int:
         args.category,
         args.image_size,
     )
+    report["spatial_strategy"] = describe_spatial_strategy(args)
     if args.checkpoint is not None:
         report["checkpoint_sha256"] = _sha256_file(args.checkpoint)
         report["train_stage_seconds"] = None
