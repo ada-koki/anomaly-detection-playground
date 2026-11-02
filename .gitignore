@@ -16,3 +16,28 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+
+# モデル重み・配列データ（*.bin は OpenVINO IR の重みも含む）
+*.safetensors
+*.onnx_data
+*.bin
+*.h5
+*.pkl
+*.npy
+*.npz
+
+# アーカイブ（データセットやモデルの配布物を誤ってコミットしない）
+*.zip
+*.tar
+*.tar.gz
+*.tar.xz
+*.tgz
+*.7z
+
+# 秘密情報・ローカル設定
+.env
+.env.*
+!.env.example
+
+# API 利用ログ（外部サービス名やトークンを含みうる）
+api_usage*.jsonl

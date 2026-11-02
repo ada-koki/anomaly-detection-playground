@@ -91,6 +91,12 @@ python scripts/run_anomalib.py --category bottle --model padim --manifest-only
 
 評価指標・注意点は [評価プロトコル](docs/benchmark_protocol.md) を参照してください。`python -m unittest discover -s tests -v` で依存関係なしの基本テストが実行できます。
 
+## CI とデータの取り扱い
+
+[![CI](https://github.com/ada-koki/anomaly-detection-playground/actions/workflows/ci.yml/badge.svg)](https://github.com/ada-koki/anomaly-detection-playground/actions/workflows/ci.yml)
+
+GitHub Actions（`.github/workflows/ci.yml`）は push と pull_request で、Python 3.11 / 3.13 の matrix により、構文検査・`unittest`・`scripts/run_anomalib.py --help`・`scripts/check_repo_safety.py` を実行します。外部データセットや学習済み重みは取得せず、依存パッケージもインストールしません。MVTec AD など実データを使う学習・評価は CI では実行せず、手元で手動実行して結果の要約のみを `benchmarks/` と `docs/verification/` に記録します。データ・重みの権利とライセンス確認手順、コミット前チェック（`python scripts/check_repo_safety.py --staged`）は [docs/data_and_ci.md](docs/data_and_ci.md) を参照してください。
+
 ## 公開方針
 
 本リポジトリで公開するのは、公開可能な技術情報と個人で作成・公開する権利を持つコードです。勤務先・顧客・第三者の非公開ソースコード、画像、モデル、業務要件、計測ログは含めません。データやモデルの公開・利用前には、利用許諾と権利帰属を確認します。
