@@ -58,6 +58,7 @@ from adbench.protocol import (
     protocol_file_sha256,
     protocol_to_dict,
 )
+from adbench.defect_size import records_to_jsonl_lines, summarize
 from adbench.raw_eval import evaluate_raw_score_metrics
 from adbench.report import (
     DEPENDENCY_NAMES,
@@ -414,6 +415,21 @@ def parse_and_resolve(
     args = _resolve_args(args, protocol, overrides)
     args.protocol = protocol_path
     return args, protocol, protocol_path, overrides
+
+
+def _validation_thresholds(model: Any) -> dict[str, float | None]:
+    """PostProcessor が検証集合で求めた生スケールの閾値を返す（未計算は None）。"""
+    import math
+
+    post_processor = getattr(model, "post_processor", None)
+    values: dict[str, float | None] = {"image": None, "pixel": None}
+    for key in ("image", "pixel"):
+        tensor = getattr(post_processor, f"{key}_threshold", None)
+        if tensor is None:
+            continue
+        number = float(tensor)
+        values[key] = number if math.isfinite(number) else None
+    return values
 
 
 def build_tiling_config(args: argparse.Namespace) -> Any:
@@ -1425,10 +1441,30 @@ def _run_stages(
         with sampled_rss(DEFAULT_SAMPLING_INTERVAL_S) as raw_memory:
             raw_start = time.perf_counter()
             try:
+                thresholds = _validation_thresholds(model)
                 raw_metrics = evaluate_raw_score_metrics(
                     model,
                     _test_samples(datamodule),
                     device=args.device,
+                    collect_per_image=True,
+                    image_threshold=thresholds["image"],
+                    pixel_threshold=thresholds["pixel"],
+                )
+                # Issue #14: 画像ごとのレコードは別ファイルへ保存し、report には集計のみ残す。
+                per_image_records = raw_metrics.pop("per_image_records", [])
+                per_image_path = output / "per_image.jsonl"
+                per_image_path.write_text(
+                    "".join(line + "\n" for line in records_to_jsonl_lines(per_image_records)),
+                    encoding="utf-8",
+                )
+                report["defect_size"] = summarize(
+                    per_image_records,
+                    thresholds["image"],
+                    thresholds["pixel"],
+                )
+                report["defect_size"]["per_image_path"] = per_image_path.name
+                report["defect_size"]["mask_vanished_after_resize"] = raw_metrics.get(
+                    "mask_vanished_after_resize"
                 )
             except Exception as error:  # 補助指標のため実行全体は止めない
                 raw_metrics = {
